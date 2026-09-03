@@ -59,6 +59,12 @@ class CreditBalance(TypedDict):
     spendable: int
     used: int
 
+class CreditLot(TypedDict):
+    grant_class: Literal["test", "plan", "top_up", "adjustment", "legacy"]
+    remaining: int
+    reserved: int
+    expires_at: str | None
+
 class AccountFunding(TypedDict):
     status: Literal["active", "suspended"]
     debt_credits: int
@@ -68,6 +74,7 @@ class Account(TypedDict):
     object: Literal["account"]
     status: Literal["active", "suspended", "closed"]
     credits: CreditBalance
+    credit_lots: list[CreditLot]
     funding: AccountFunding
     created_at: str
     updated_at: str

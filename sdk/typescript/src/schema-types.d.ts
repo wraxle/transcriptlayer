@@ -96,6 +96,13 @@ export type CreditBalance = {
   "used": number;
 };
 
+export type CreditLot = {
+  "grant_class": "test" | "plan" | "top_up" | "adjustment" | "legacy";
+  "remaining": number;
+  "reserved": number;
+  "expires_at": string | null;
+};
+
 export type AccountFunding = {
   "status": "active" | "suspended";
   "debt_credits": number;
@@ -106,6 +113,7 @@ export type Account = {
   "object": "account";
   "status": "active" | "suspended" | "closed";
   "credits": CreditBalance;
+  "credit_lots": Array<CreditLot>;
   "funding": AccountFunding;
   "created_at": string;
   "updated_at": string;

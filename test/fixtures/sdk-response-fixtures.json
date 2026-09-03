@@ -13,6 +13,14 @@
         "spendable": 9,
         "used": 1
       },
+      "credit_lots": [
+        {
+          "grant_class": "plan",
+          "remaining": 9,
+          "reserved": 0,
+          "expires_at": "2026-09-01T00:00:00Z"
+        }
+      ],
       "funding": {
         "status": "active",
         "debt_credits": 0
