@@ -1,0 +1,5472 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "TranscriptLayer API",
+    "version": "1.0.0-draft.1",
+    "description": "Multi-platform exact-caption contract. YouTube is the first supported source Adapter. The earlier YouTube request shape is deployed to isolated Cloudflare staging; this source-neutral pre-beta contract is not yet deployed."
+  },
+  "servers": [
+    {
+      "url": "https://api.transcriptlayer.com",
+      "description": "Planned production origin"
+    }
+  ],
+  "x-status": "isolated-staging-implementation",
+  "x-request-body-limit-bytes": 131072,
+  "x-billing-contract": "One completed selected track costs one credit, whether served from cache or extracted. Failed and successfully cancelled requests cost zero.",
+  "x-freshness-contract": "Omitted max_age_seconds accepts any valid stored successful artifact. This is archival reuse, not a current-source guarantee.",
+  "x-source-access-contract": "Before first cross-account reuse and whenever the last successful anonymous access check is older than 604800 seconds, validate source accessibility without refreshing captions. Deny private, deleted, restricted, or unverifiable sources.",
+  "x-retention-contract": {
+    "terminal_transcript_batch_and_content_days": 30,
+    "webhook_history_days": 30,
+    "terminal_idempotency_days": 7,
+    "completed_erasure_tombstone_days": 7,
+    "customer_visible_usage_months": 12,
+    "customer_analytics_days": 30,
+    "shared_successful_artifacts": "indefinite subject to denial, removal, corruption, and renderer compatibility"
+  },
+  "x-batch-admission-contract": "Atomic reservation for every item; duplicate references and duplicate normalized source-plus-selection requests are rejected.",
+  "x-customer-deletion-contract": "DELETE immediately hides the customer resource, fences unsettled work, and returns 202 until erasure finishes, then 204. Content-free deletion and idempotency tombstones remain for seven days after erasure.",
+  "x-thumbnail-contract": "Thumbnail bytes are fetched only after an authenticated thumbnail GET, cost no transcript credit, and never change transcript completion or observed_at.",
+  "x-batch-retry-contract": "Failed items are retried only by creating a new atomic batch with an explicit new idempotency key; no terminal batch or item is mutated in place.",
+  "x-owner-gateway-contract": {
+    "server": "https://auth.transcriptlayer.com",
+    "security_scheme": "ownerSession",
+    "forwarded_namespaces": [
+      "/v1/account",
+      "/v1/analytics",
+      "/v1/api-keys",
+      "/v1/batches",
+      "/v1/billing",
+      "/v1/transcripts",
+      "/v1/usage",
+      "/v1/webhook-deliveries",
+      "/v1/webhook-endpoints"
+    ],
+    "mutation_origin_policy": "POST and DELETE require the exact configured dashboard Origin. GET rejects a present non-dashboard Origin.",
+    "credential_policy": "The browser sends the opaque HttpOnly owner cookie with credentials included. The gateway never exposes a TranscriptLayer API key or WorkOS token."
+  },
+  "security": [
+    {
+      "bearerKey": []
+    }
+  ],
+  "paths": {
+    "/v1/status": {
+      "get": {
+        "operationId": "getServiceStatus",
+        "summary": "Read coarse public service health",
+        "description": "Returns a minute-level materialized view of the API, transcript processing, webhook delivery, and up to ten current or recent public incidents. It does not expose proxy counts, queue depth, customer activity, credentials, or provider details. A snapshot older than three minutes reports unknown instead of claiming health. An active incident can only raise, never lower, its affected component state.",
+        "security": [],
+        "x-client-hidden": true,
+        "responses": {
+          "200": {
+            "description": "Latest materialized service health",
+            "headers": {
+              "X-Request-Id": { "$ref": "#/components/headers/RequestId" }
+            },
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ServiceStatus" }
+              }
+            }
+          },
+          "500": { "$ref": "#/components/responses/Internal" },
+          "503": { "$ref": "#/components/responses/Unavailable" }
+        }
+      }
+    },
+    "/v1/status/sla": {
+      "get": {
+        "operationId": "getServiceLevelPeriod",
+        "summary": "Read public service-level evidence",
+        "description": "Returns the current or one of the previous 12 UTC calendar months' 99.5% API and cached-delivery service-level calculation. Missing synthetic buckets make availability unknown. Planned maintenance requires at least 24 hours of notice and can exclude at most four hours in one calendar month. Uncached extraction completion is reported as a separate operational objective and cannot earn service credits while the service depends on one proxy provider.",
+        "security": [],
+        "x-client-hidden": true,
+        "parameters": [
+          {
+            "name": "period",
+            "in": "query",
+            "required": false,
+            "description": "Current or one of the previous 12 UTC calendar months. Defaults to the current month.",
+            "schema": { "type": "string", "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Service-level period and its durable evidence counts",
+            "headers": {
+              "X-Request-Id": { "$ref": "#/components/headers/RequestId" }
+            },
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ServiceLevelPeriod" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "500": { "$ref": "#/components/responses/Internal" },
+          "503": { "$ref": "#/components/responses/Unavailable" }
+        }
+      }
+    },
+    "/v1/session": {
+      "get": {
+        "operationId": "getOwnerSession",
+        "summary": "Read the current browser owner session",
+        "description": "Runs only on the owner gateway. Returns the account role and display identity without exposing API keys, provider tokens, provider session IDs, or cookie values.",
+        "x-owner-gateway-local": true,
+        "servers": [
+          { "url": "https://auth.transcriptlayer.com", "description": "Planned browser owner origin" }
+        ],
+        "security": [
+          { "ownerSession": [] }
+        ],
+        "responses": {
+          "200": {
+            "description": "Active owner session",
+            "headers": {
+              "X-Request-Id": { "$ref": "#/components/headers/RequestId" }
+            },
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/OwnerSession" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "503": { "$ref": "#/components/responses/Unavailable" }
+        }
+      }
+    },
+    "/v1/account": {
+      "get": {
+        "operationId": "getAccount",
+        "summary": "Read account status and credit balances",
+        "description": "Requires account:read. This route reports credit state but cannot change a plan, payment method, or account status.",
+        "responses": {
+          "200": {
+            "description": "Account summary",
+            "headers": {
+              "X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+              "X-Credits-Charged": { "$ref": "#/components/headers/CreditsCharged" },
+              "X-RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+              "X-RateLimit-Remaining": { "$ref": "#/components/headers/RateLimitRemaining" },
+              "X-RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+            },
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Account" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/Limited" },
+          "500": { "$ref": "#/components/responses/Internal" },
+          "503": { "$ref": "#/components/responses/Unavailable" }
+        }
+      }
+    },
+    "/v1/account/close": {
+      "post": {
+        "operationId": "closeOwnerAccount",
+        "summary": "Close the current account and begin durable erasure",
+        "description": "Owner-session only. Requires the exact dashboard Origin, an account-ID confirmation, and a verified WorkOS auth_time no more than five minutes old. Acceptance closes the account and revokes its API keys and browser identities before returning. The owner gateway clears the local session cookie. The freshness fence is locally tested; the WorkOS-backed flow remains a live production gate.",
+        "servers": [
+          { "url": "https://auth.transcriptlayer.com", "description": "Planned browser owner origin" }
+        ],
+        "security": [
+          { "ownerSession": [] }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/AccountConfirmation" }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Closure accepted; customer access is revoked and durable erasure is pending, processing, or complete",
+            "headers": {
+              "X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+              "X-Credits-Charged": { "$ref": "#/components/headers/CreditsCharged" },
+              "X-RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+              "X-RateLimit-Remaining": { "$ref": "#/components/headers/RateLimitRemaining" },
+              "X-RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+            },
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/AccountClosure" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "500": { "$ref": "#/components/responses/Internal" },
+          "429": { "$ref": "#/components/responses/Limited" },
+          "503": { "$ref": "#/components/responses/Unavailable" }
+        }
+      }
+    },
+    "/v1/billing/catalog": {
+      "get": {
+        "operationId": "getBillingCatalog",
+        "summary": "List subscription plans, eligible top-ups, and checkout availability",
+        "description": "Owner-session only. Returns the two active subscription plans, current subscription state, and only the top-up eligible for that active plan. Provider price IDs and reconciliation details are never exposed.",
+        "servers": [{ "url": "https://auth.transcriptlayer.com", "description": "Browser owner origin" }],
+        "security": [{ "ownerSession": [] }],
+        "responses": {
+          "200": {
+            "description": "Customer-safe billing catalog",
+            "headers": {
+              "X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+              "X-Credits-Charged": { "$ref": "#/components/headers/CreditsCharged" },
+              "X-RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+              "X-RateLimit-Remaining": { "$ref": "#/components/headers/RateLimitRemaining" },
+              "X-RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+            },
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BillingCatalog" } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "429": { "$ref": "#/components/responses/Limited" },
+          "500": { "$ref": "#/components/responses/Internal" },
+          "503": { "$ref": "#/components/responses/Unavailable" }
+        }
+      }
+    },
+    "/v1/billing/checkout": {
+      "post": {
+        "operationId": "createBillingCheckout",
+        "summary": "Create or replay one hosted credit-pack checkout",
+        "description": "Owner-session only. The idempotency key binds one account and price version. Checkout has a separate hourly account limit: admitted idempotent replays do not consume another slot, and funded accounts may have a higher configured limit. HTTP 429 uses checkout_rate_limited and includes Retry-After. A browser redirect is never proof of payment; poll the returned receipt after Stripe redirects back.",
+        "servers": [{ "url": "https://auth.transcriptlayer.com", "description": "Browser owner origin" }],
+        "security": [{ "ownerSession": [] }],
+        "parameters": [{ "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateBillingCheckoutRequest" } } }
+        },
+        "responses": {
+          "200": {
+            "description": "Prior checkout replayed",
+            "headers": {
+              "X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+              "X-Credits-Charged": { "$ref": "#/components/headers/CreditsCharged" },
+              "X-RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+              "X-RateLimit-Remaining": { "$ref": "#/components/headers/RateLimitRemaining" },
+              "X-RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+            },
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BillingCheckout" } } }
+          },
+          "201": {
+            "description": "Hosted checkout created",
+            "headers": {
+              "X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+              "X-Credits-Charged": { "$ref": "#/components/headers/CreditsCharged" },
+              "X-RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+              "X-RateLimit-Remaining": { "$ref": "#/components/headers/RateLimitRemaining" },
+              "X-RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+            },
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BillingCheckout" } } }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "429": { "$ref": "#/components/responses/Limited" },
+          "500": { "$ref": "#/components/responses/Internal" },
+          "503": { "$ref": "#/components/responses/Unavailable" }
+        }
+      }
+    },
+    "/v1/billing/subscription/cancel": {
+      "post": {
+        "operationId": "cancelBillingSubscription",
+        "summary": "Stop the current subscription from renewing",
+        "description": "Owner-session only. Schedules the current paid subscription to end after its present term. Existing credits and any scheduled grants within the paid annual term remain available. Repeating the request is safe.",
+        "servers": [{ "url": "https://auth.transcriptlayer.com", "description": "Browser owner origin" }],
+        "security": [{ "ownerSession": [] }],
+        "parameters": [{ "$ref": "#/components/parameters/IdempotencyKey" }],
+        "responses": {
+          "200": {
+            "description": "Renewal stopped or already stopped",
+            "headers": {
+              "X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+              "X-Credits-Charged": { "$ref": "#/components/headers/CreditsCharged" },
+              "X-RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+              "X-RateLimit-Remaining": { "$ref": "#/components/headers/RateLimitRemaining" },
+              "X-RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+            },
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BillingSubscription" } } }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "429": { "$ref": "#/components/responses/Limited" },
+          "500": { "$ref": "#/components/responses/Internal" },
+          "503": { "$ref": "#/components/responses/Unavailable" }
+        }
+      }
+    },
+    "/v1/billing/receipts": {
+      "get": {
+        "operationId": "listBillingReceipts",
+        "summary": "List account billing history",
+        "description": "Owner-session only. Returns subscription invoices, top-ups, and checkout states without provider customer, payment, charge, refund, dispute, or invoice IDs.",
+        "servers": [{ "url": "https://auth.transcriptlayer.com", "description": "Browser owner origin" }],
+        "security": [{ "ownerSession": [] }],
+        "parameters": [
+          { "$ref": "#/components/parameters/Cursor" },
+          { "$ref": "#/components/parameters/Limit" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Billing receipt page",
+            "headers": {
+              "X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+              "X-Credits-Charged": { "$ref": "#/components/headers/CreditsCharged" },
+              "X-RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+              "X-RateLimit-Remaining": { "$ref": "#/components/headers/RateLimitRemaining" },
+              "X-RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+            },
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BillingReceiptPage" } } }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "429": { "$ref": "#/components/responses/Limited" },
+          "500": { "$ref": "#/components/responses/Internal" },
+          "503": { "$ref": "#/components/responses/Unavailable" }
+        }
+      }
+    },
+    "/v1/billing/receipts/{billing_receipt_id}": {
+      "get": {
+        "operationId": "getBillingReceipt",
+        "summary": "Read one authoritative billing receipt",
+        "description": "Owner-session only. Accepts a checkout session ID after a hosted-checkout return or a public receipt ID from billing history. Server-retained state, not the return query string, determines payment state.",
+        "servers": [{ "url": "https://auth.transcriptlayer.com", "description": "Browser owner origin" }],
+        "security": [{ "ownerSession": [] }],
+        "parameters": [{ "$ref": "#/components/parameters/BillingReceiptId" }],
+        "responses": {
+          "200": {
+            "description": "Authoritative billing receipt",
+            "headers": {
+              "X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+              "X-Credits-Charged": { "$ref": "#/components/headers/CreditsCharged" },
+              "X-RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+              "X-RateLimit-Remaining": { "$ref": "#/components/headers/RateLimitRemaining" },
+              "X-RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+            },
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BillingReceipt" } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/Limited" },
+          "500": { "$ref": "#/components/responses/Internal" },
+          "503": { "$ref": "#/components/responses/Unavailable" }
+        }
+      }
+    },
+    "/v1/api-keys": {
+      "get": {
+        "operationId": "listApiKeys",
+        "summary": "List active API keys",
+        "description": "Requires api_keys:read. Returns at most the account limit of 20 active, unexpired keys. Raw secrets and secret hashes are never returned.",
+        "responses": {
+          "200": {
+            "description": "Active API keys",
+            "headers": {
+              "X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+              "X-Credits-Charged": { "$ref": "#/components/headers/CreditsCharged" },
+              "X-RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+              "X-RateLimit-Remaining": { "$ref": "#/components/headers/RateLimitRemaining" },
+              "X-RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+            },
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ApiKeyList" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "429": { "$ref": "#/components/responses/Limited" },
+          "500": { "$ref": "#/components/responses/Internal" },
+          "503": { "$ref": "#/components/responses/Unavailable" }
+        }
+      },
+      "post": {
+        "operationId": "createApiKey",
+        "summary": "Create a named API key",
+        "description": "Requires api_keys:write and Idempotency-Key. Requested scopes must be a subset of the current key's scopes. The raw secret appears only in the first 201 response and is stored only as a SHA-256 verifier. Creation attempts retain only the normalized request hash and created key ID for seven days. Replaying the same request returns idempotency_secret_unavailable with the exact resource_id so the caller can revoke the orphan and retry with a new key. A different request with the same idempotency key returns idempotency_conflict. New API-key and webhook-endpoint creations share an hourly account limit. An admitted retry with the same operation and idempotency key does not consume another slot. HTTP 429 uses control_plane_rate_limited and includes Retry-After.",
+        "parameters": [
+          { "$ref": "#/components/parameters/IdempotencyKey" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/CreateApiKeyRequest" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "API key created; copy secret now",
+            "headers": {
+              "X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+              "X-Credits-Charged": { "$ref": "#/components/headers/CreditsCharged" },
+              "X-RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+              "X-RateLimit-Remaining": { "$ref": "#/components/headers/RateLimitRemaining" },
+              "X-RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+            },
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ApiKeyWithSecret" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "429": { "$ref": "#/components/responses/Limited" },
+          "500": { "$ref": "#/components/responses/Internal" },
+          "503": { "$ref": "#/components/responses/Unavailable" }
+        }
+      }
+    },
+    "/v1/api-keys/revoke-all": {
+      "post": {
+        "operationId": "revokeAllApiKeys",
+        "summary": "Revoke every active API key",
+        "description": "Owner-session-only emergency control. Requires the exact dashboard Origin and account-ID confirmation. The browser owner identity remains active so the owner can create a one-time recovery key. Revocation affects later authentication and does not cancel requests that already passed authentication and entered a durable authority.",
+        "servers": [
+          { "url": "https://auth.transcriptlayer.com", "description": "Planned browser owner origin" }
+        ],
+        "security": [
+          { "ownerSession": [] }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/AccountConfirmation" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Every API key that was active when the update ran is revoked",
+            "headers": {
+              "X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+              "X-Credits-Charged": { "$ref": "#/components/headers/CreditsCharged" },
+              "X-RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+              "X-RateLimit-Remaining": { "$ref": "#/components/headers/RateLimitRemaining" },
+              "X-RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+            },
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ApiKeyRevocation" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "500": { "$ref": "#/components/responses/Internal" },
+          "429": { "$ref": "#/components/responses/Limited" },
+          "503": { "$ref": "#/components/responses/Unavailable" }
+        }
+      }
+    },
+    "/v1/api-keys/{api_key_id}": {
+      "delete": {
+        "operationId": "revokeApiKey",
+        "summary": "Revoke an API key",
+        "description": "Requires api_keys:write. Unknown, cross-account, already revoked, and repeated requests return 204. The last active api_keys:write key cannot be revoked until a replacement exists.",
+        "parameters": [
+          { "$ref": "#/components/parameters/ApiKeyId" }
+        ],
+        "responses": {
+          "202": {
+            "description": "Endpoint is disabled, but indexed delivery fencing is still running; repeat this DELETE after Retry-After",
+            "headers": {
+              "Retry-After": { "$ref": "#/components/headers/RetryAfter" },
+              "X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+              "X-Credits-Charged": { "$ref": "#/components/headers/CreditsCharged" },
+              "X-RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+              "X-RateLimit-Remaining": { "$ref": "#/components/headers/RateLimitRemaining" },
+              "X-RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+            }
+          },
+          "204": {
+            "description": "Endpoint is absent or deletion is complete",
+            "headers": {
+              "X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+              "X-Credits-Charged": { "$ref": "#/components/headers/CreditsCharged" },
+              "X-RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+              "X-RateLimit-Remaining": { "$ref": "#/components/headers/RateLimitRemaining" },
+              "X-RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "429": { "$ref": "#/components/responses/Limited" },
+          "500": { "$ref": "#/components/responses/Internal" },
+          "503": { "$ref": "#/components/responses/Unavailable" }
+        }
+      }
+    },
+    "/v1/transcripts": {
+      "post": {
+        "operationId": "createTranscript",
+        "summary": "Get or start one selected transcript track",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/Prefer"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateTranscriptRequest"
+              },
+              "examples": {
+                "byLanguage": {
+                  "$ref": "#/components/examples/CreateTranscriptRequest"
+                },
+                "exactTrack": {
+                  "$ref": "#/components/examples/ExactTrackRequest"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Durably admitted request reached completed or failed within the wait budget",
+            "headers": {
+              "Location": {
+                "$ref": "#/components/headers/Location"
+              },
+              "ETag": {
+                "$ref": "#/components/headers/ETag"
+              },
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "X-Credits-Charged": {
+                "$ref": "#/components/headers/CreditsCharged"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimitLimit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimitRemaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimitReset"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TerminalTranscript"
+                },
+                "examples": {
+                  "completed": {
+                    "$ref": "#/components/examples/CompletedTranscript"
+                  },
+                  "failed": {
+                    "$ref": "#/components/examples/FailedTranscript"
+                  }
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Durable request accepted and still queued or processing",
+            "headers": {
+              "Location": {
+                "$ref": "#/components/headers/Location"
+              },
+              "Retry-After": {
+                "$ref": "#/components/headers/RetryAfter"
+              },
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "X-Credits-Charged": {
+                "$ref": "#/components/headers/CreditsCharged"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimitLimit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimitRemaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimitReset"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PendingTranscript"
+                },
+                "examples": {
+                  "processing": {
+                    "$ref": "#/components/examples/PendingTranscript"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "429": {
+            "$ref": "#/components/responses/Limited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      },
+      "get": {
+        "operationId": "listTranscripts",
+        "summary": "List this account's transcript requests",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Cursor"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Transcript request page",
+            "headers": {
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimitLimit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimitRemaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimitReset"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TranscriptPage"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/Limited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    },
+    "/v1/transcripts/{transcript_id}": {
+      "get": {
+        "operationId": "getTranscript",
+        "summary": "Poll or retrieve one transcript request",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/TranscriptId"
+          },
+          {
+            "$ref": "#/components/parameters/IfNoneMatch"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current transcript request resource",
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/ETag"
+              },
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimitLimit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimitRemaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimitReset"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Transcript"
+                }
+              }
+            }
+          },
+          "304": {
+            "$ref": "#/components/responses/NotModified"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/Limited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteTranscript",
+        "summary": "Hide and erase one customer transcript resource",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/TranscriptId"
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Access is revoked and cancel-and-erase work is still running; repeat this DELETE after Retry-After",
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/RetryAfter"
+              },
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimitLimit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimitRemaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimitReset"
+              }
+            }
+          },
+          "204": {
+            "description": "Customer erasure completed; a content-free tombstone still prevents accidental idempotency replay",
+            "headers": {
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimitLimit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimitRemaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimitReset"
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/Limited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    },
+    "/v1/transcripts/{transcript_id}/cancel": {
+      "post": {
+        "operationId": "cancelTranscript",
+        "summary": "Cancel before the selected-track commit grant",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/TranscriptId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Cancelled resource or an already cancelled resource",
+            "headers": {
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimitLimit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimitRemaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimitReset"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Transcript"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/Limited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    },
+    "/v1/transcripts/{transcript_id}/content": {
+      "get": {
+        "operationId": "downloadTranscriptContent",
+        "summary": "Download a completed transcript representation",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/TranscriptId"
+          },
+          {
+            "$ref": "#/components/parameters/IfNoneMatch"
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "text",
+                "json",
+                "srt",
+                "vtt"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Requested representation",
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/ETag"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimitLimit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimitRemaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimitReset"
+              }
+            },
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TranscriptContent"
+                }
+              },
+              "application/x-subrip": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "text/vtt": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "304": {
+            "$ref": "#/components/responses/NotModified"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "410": {
+            "$ref": "#/components/responses/Gone"
+          },
+          "429": {
+            "$ref": "#/components/responses/Limited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    },
+    "/v1/transcripts/{transcript_id}/thumbnail": {
+      "get": {
+        "operationId": "downloadTranscriptThumbnail",
+        "summary": "Lazily materialize and download an optional thumbnail without exposing an upstream URL",
+        "x-max-response-bytes": 10485760,
+        "x-max-image-width": 8192,
+        "x-max-image-height": 8192,
+        "x-max-decoded-pixels": 16777216,
+        "x-max-decoder-time-ms": 5000,
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/TranscriptId"
+          },
+          {
+            "$ref": "#/components/parameters/IfNoneMatch"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Validated stored thumbnail; thumbnail availability never blocks transcript completion and costs no transcript credit",
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/ETag"
+              },
+              "X-TranscriptLayer-Thumbnail-Cache": {
+                "$ref": "#/components/headers/ThumbnailCache"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimitLimit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimitRemaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimitReset"
+              }
+            },
+            "content": {
+              "image/jpeg": {
+                "schema": {}
+              },
+              "image/png": {
+                "schema": {}
+              },
+              "image/webp": {
+                "schema": {}
+              }
+            }
+          },
+          "202": {
+            "description": "One coalesced thumbnail materialization is still running",
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/RetryAfter"
+              },
+              "X-TranscriptLayer-Thumbnail-Cache": {
+                "$ref": "#/components/headers/ThumbnailCache"
+              },
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimitLimit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimitRemaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimitReset"
+              }
+            }
+          },
+          "304": {
+            "description": "The stored thumbnail still matches If-None-Match",
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/ETag"
+              },
+              "X-TranscriptLayer-Thumbnail-Cache": {
+                "$ref": "#/components/headers/ThumbnailCache"
+              },
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimitLimit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimitRemaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimitReset"
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/Limited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    },
+    "/v1/batches": {
+      "get": {
+        "operationId": "listBatches",
+        "summary": "List this account's batches",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Cursor"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Batches ordered from newest to oldest",
+            "headers": {
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimitLimit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimitRemaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimitReset"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/Limited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      },
+      "post": {
+        "operationId": "createBatch",
+        "summary": "Submit up to 1,000 explicit transcript items",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "x-max-bytes": 131072,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateBatchRequest"
+              },
+              "examples": {
+                "twoItems": {
+                  "$ref": "#/components/examples/CreateBatchRequest"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Batch and item requests committed",
+            "headers": {
+              "Location": {
+                "$ref": "#/components/headers/Location"
+              },
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimitLimit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimitRemaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimitReset"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Batch"
+                },
+                "examples": {
+                  "queued": {
+                    "$ref": "#/components/examples/QueuedBatch"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/TooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "429": {
+            "$ref": "#/components/responses/Limited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    },
+    "/v1/batches/{batch_id}": {
+      "get": {
+        "operationId": "getBatch",
+        "summary": "Read aggregate batch state",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/BatchId"
+          },
+          {
+            "$ref": "#/components/parameters/IfNoneMatch"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Batch resource without embedded item results",
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/ETag"
+              },
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimitLimit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimitRemaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimitReset"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Batch"
+                },
+                "examples": {
+                  "cancelled": {
+                    "$ref": "#/components/examples/CancelledBatch"
+                  }
+                }
+              }
+            }
+          },
+          "304": {
+            "$ref": "#/components/responses/NotModified"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/Limited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteBatch",
+        "summary": "Hide and erase a batch and its customer item resources",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/BatchId"
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Access is revoked and item cancellation or erasure is still running; repeat this DELETE after Retry-After",
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/RetryAfter"
+              },
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimitLimit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimitRemaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimitReset"
+              }
+            }
+          },
+          "204": {
+            "description": "Batch and customer item erasure completed; content-free tombstones still prevent accidental idempotency replay",
+            "headers": {
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimitLimit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimitRemaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimitReset"
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/Limited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    },
+    "/v1/batches/{batch_id}/items": {
+      "get": {
+        "operationId": "listBatchItems",
+        "summary": "Cursor-page batch item results",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/BatchId"
+          },
+          {
+            "$ref": "#/components/parameters/Cursor"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Batch item page",
+            "headers": {
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimitLimit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimitRemaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimitReset"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchItemPage"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/Limited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    },
+    "/v1/batches/{batch_id}/cancel": {
+      "post": {
+        "operationId": "cancelBatch",
+        "summary": "Cancel every item that has not crossed its commit grant",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/BatchId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current batch resource after cancellation fencing; status remains cancelling until every item is terminal",
+            "headers": {
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimitLimit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimitRemaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimitReset"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Batch"
+                },
+                "examples": {
+                  "cancelled": {
+                    "$ref": "#/components/examples/CancelledBatch"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/Limited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    },
+    "/v1/webhook-endpoints": {
+      "post": {
+        "operationId": "createWebhookEndpoint",
+        "summary": "Register an HTTPS webhook destination",
+        "description": "Requires Idempotency-Key. Creates a pending endpoint and returns its signing secret. Verify ownership before using the endpoint on transcript or batch requests. An account may have at most 100 active endpoints. New API-key and webhook-endpoint creations share an hourly account limit. An admitted retry with the same operation and idempotency key does not consume another slot. HTTP 429 uses control_plane_rate_limited and includes Retry-After.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WebhookActionIdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateWebhookEndpointRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Pending endpoint; store signing_secret because later reads omit it",
+            "headers": {
+              "X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+              "X-Credits-Charged": { "$ref": "#/components/headers/CreditsCharged" },
+              "X-RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+              "X-RateLimit-Remaining": { "$ref": "#/components/headers/RateLimitRemaining" },
+              "X-RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookEndpointWithSecret"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/Limited"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          }
+        }
+      },
+      "get": {
+        "operationId": "listWebhookEndpoints",
+        "summary": "List registered webhook destinations",
+        "responses": {
+          "200": {
+            "description": "Active endpoint list",
+            "headers": {
+              "X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+              "X-Credits-Charged": { "$ref": "#/components/headers/CreditsCharged" },
+              "X-RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+              "X-RateLimit-Remaining": { "$ref": "#/components/headers/RateLimitRemaining" },
+              "X-RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookEndpointList"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/Limited"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          }
+        }
+      }
+    },
+    "/v1/webhook-endpoints/{webhook_endpoint_id}": {
+      "get": {
+        "operationId": "getWebhookEndpoint",
+        "summary": "Get one webhook destination",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WebhookEndpointId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Endpoint without signing secrets",
+            "headers": {
+              "X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+              "X-Credits-Charged": { "$ref": "#/components/headers/CreditsCharged" },
+              "X-RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+              "X-RateLimit-Remaining": { "$ref": "#/components/headers/RateLimitRemaining" },
+              "X-RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookEndpoint"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/Limited"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteWebhookEndpoint",
+        "summary": "Delete a webhook destination and exhaust its pending deliveries",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WebhookEndpointId"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Endpoint is absent and no later retry will use it; repeated deletion and unknown account-local IDs also return 204",
+            "headers": {
+              "X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+              "X-Credits-Charged": { "$ref": "#/components/headers/CreditsCharged" },
+              "X-RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+              "X-RateLimit-Remaining": { "$ref": "#/components/headers/RateLimitRemaining" },
+              "X-RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/Limited"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          }
+        }
+      }
+    },
+    "/v1/webhook-endpoints/{webhook_endpoint_id}/verify": {
+      "post": {
+        "operationId": "verifyWebhookEndpoint",
+        "summary": "Verify control of a webhook destination",
+        "description": "Sends a signed endpoint.verification event. The receiver must return the supplied challenge in a 2xx JSON response. Verification is limited to five attempts per account per hour.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WebhookEndpointId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Verified endpoint",
+            "headers": {
+              "X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+              "X-Credits-Charged": { "$ref": "#/components/headers/CreditsCharged" },
+              "X-RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+              "X-RateLimit-Remaining": { "$ref": "#/components/headers/RateLimitRemaining" },
+              "X-RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookEndpoint"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "429": {
+            "$ref": "#/components/responses/Limited"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          }
+        }
+      }
+    },
+    "/v1/webhook-endpoints/{webhook_endpoint_id}/rotate-secret": {
+      "post": {
+        "operationId": "rotateWebhookEndpointSecret",
+        "summary": "Rotate an endpoint signing secret",
+        "description": "Requires Idempotency-Key. Returns the new secret. Deliveries carry current and previous signature pairs for 24 hours. A second rotation is blocked until that overlap ends.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WebhookEndpointId"
+          },
+          {
+            "$ref": "#/components/parameters/WebhookActionIdempotencyKey"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Rotated endpoint; store signing_secret because later reads omit it",
+            "headers": {
+              "X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+              "X-Credits-Charged": { "$ref": "#/components/headers/CreditsCharged" },
+              "X-RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+              "X-RateLimit-Remaining": { "$ref": "#/components/headers/RateLimitRemaining" },
+              "X-RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookEndpointWithSecret"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/Limited"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          }
+        }
+      }
+    },
+    "/v1/webhook-deliveries": {
+      "get": {
+        "operationId": "listWebhookDeliveries",
+        "summary": "List webhook delivery history",
+        "description": "Returns newest first. Receiver response bodies are never retained. Terminal history expires after 30 days.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Cursor"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Delivery page",
+            "headers": {
+              "X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+              "X-Credits-Charged": { "$ref": "#/components/headers/CreditsCharged" },
+              "X-RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+              "X-RateLimit-Remaining": { "$ref": "#/components/headers/RateLimitRemaining" },
+              "X-RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookDeliveryPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/Limited"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          }
+        }
+      }
+    },
+    "/v1/webhook-deliveries/{webhook_delivery_id}": {
+      "get": {
+        "operationId": "getWebhookDelivery",
+        "summary": "Get one webhook delivery and its attempts",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WebhookDeliveryId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Delivery detail",
+            "headers": {
+              "X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+              "X-Credits-Charged": { "$ref": "#/components/headers/CreditsCharged" },
+              "X-RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+              "X-RateLimit-Remaining": { "$ref": "#/components/headers/RateLimitRemaining" },
+              "X-RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookDelivery"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/Limited"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          }
+        }
+      }
+    },
+    "/v1/webhook-deliveries/{webhook_delivery_id}/replay": {
+      "post": {
+        "operationId": "replayWebhookDelivery",
+        "summary": "Create a new delivery for a terminal event",
+        "description": "Requires Idempotency-Key. The new delivery keeps the original immutable event ID so receiver deduplication remains valid. Only delivered or exhausted events with a live resource and enabled endpoint can be replayed.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WebhookDeliveryId"
+          },
+          {
+            "$ref": "#/components/parameters/WebhookActionIdempotencyKey"
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Replay queued",
+            "headers": {
+              "X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+              "X-Credits-Charged": { "$ref": "#/components/headers/CreditsCharged" },
+              "X-RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+              "X-RateLimit-Remaining": { "$ref": "#/components/headers/RateLimitRemaining" },
+              "X-RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookDelivery"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/Limited"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          }
+        }
+      }
+    },
+    "/v1/analytics/overview": {
+      "get": {
+        "operationId": "getAccountAnalyticsOverview",
+        "summary": "Read account request analytics and recent diagnostics",
+        "description": "Requires analytics:read. Metrics are grouped by the UTC hour in which each request was admitted, so outcome rates use a coherent request cohort. The current UTC hour and previous window_hours minus one hourly buckets are included. Execution averages expose queue, processing, source-wait, and final source-work phases with explicit sample coverage. Raw transcript text, source IDs, account IDs, and provider or proxy internals are excluded.",
+        "parameters": [
+          {
+            "name": "window",
+            "in": "query",
+            "required": false,
+            "description": "Dashboard window. Defaults to 24h.",
+            "schema": {
+              "type": "string",
+              "enum": ["24h", "7d", "30d"],
+              "default": "24h"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Account-scoped analytics overview",
+            "headers": {
+              "X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+              "X-Credits-Charged": { "$ref": "#/components/headers/CreditsCharged" },
+              "X-RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+              "X-RateLimit-Remaining": { "$ref": "#/components/headers/RateLimitRemaining" },
+              "X-RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+            },
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/AccountAnalyticsOverview" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "429": { "$ref": "#/components/responses/Limited" },
+          "500": { "$ref": "#/components/responses/Internal" },
+          "503": { "$ref": "#/components/responses/Unavailable" }
+        }
+      }
+    },
+    "/v1/analytics/requests/{request_id}": {
+      "get": {
+        "operationId": "getAccountRequestDiagnostic",
+        "summary": "Read one account request diagnostic",
+        "description": "Requires analytics:read. The lookup is bound to the authenticated account. Unknown request IDs and IDs owned by another account both return 404. Raw transcript text, source IDs, account IDs, and provider or proxy internals are excluded.",
+        "parameters": [
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^req_[A-Za-z0-9]+$",
+              "maxLength": 200
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Account-scoped request diagnostic",
+            "headers": {
+              "X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+              "X-Credits-Charged": { "$ref": "#/components/headers/CreditsCharged" },
+              "X-RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+              "X-RateLimit-Remaining": { "$ref": "#/components/headers/RateLimitRemaining" },
+              "X-RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+            },
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/AccountAnalyticsRequest" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/Limited" },
+          "500": { "$ref": "#/components/responses/Internal" },
+          "503": { "$ref": "#/components/responses/Unavailable" }
+        }
+      }
+    },
+    "/v1/usage": {
+      "get": {
+        "operationId": "listUsage",
+        "summary": "Cursor-page immutable credit entries",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Cursor"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Usage entry page",
+            "headers": {
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimitLimit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimitRemaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimitReset"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UsagePage"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/Limited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    }
+  },
+  "webhooks": {
+    "terminalEvent": {
+      "post": {
+        "operationId": "receiveTerminalEvent",
+        "summary": "Receive a thin terminal resource event",
+        "security": [
+          {
+            "webhookSignature": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "TranscriptLayer-Signature",
+            "in": "header",
+            "required": true,
+            "description": "v1=<hex HMAC-SHA256> using the current signing key.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "TranscriptLayer-Event-Id",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^evt_[A-Za-z0-9]+$"
+            }
+          },
+          {
+            "name": "TranscriptLayer-Key-Id",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^whk_[A-Za-z0-9]+$"
+            }
+          },
+          {
+            "name": "TranscriptLayer-Timestamp",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "TranscriptLayer-Previous-Key-Id",
+            "in": "header",
+            "required": false,
+            "description": "Present during the 24-hour overlap after secret rotation.",
+            "schema": {
+              "type": "string",
+              "pattern": "^whk_[A-Za-z0-9]+$"
+            }
+          },
+          {
+            "name": "TranscriptLayer-Previous-Signature",
+            "in": "header",
+            "required": false,
+            "description": "Signature paired with TranscriptLayer-Previous-Key-Id during rotation overlap.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WebhookEvent"
+              },
+              "examples": {
+                "terminal": {
+                  "$ref": "#/components/examples/WebhookEvent"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Any 2xx response acknowledges this delivery attempt"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerKey": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Named, scoped TranscriptLayer API key. Never pass it in a URL."
+      },
+      "ownerSession": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "__Host-tl_owner",
+        "description": "Opaque encrypted browser session issued by the owner gateway. JavaScript cannot read it. Browser calls use credentials: include."
+      },
+      "webhookSignature": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "TranscriptLayer-Signature",
+        "description": "HMAC signature over the exact body, timestamp, event ID, schema version, and key ID."
+      }
+    },
+    "parameters": {
+      "IdempotencyKey": {
+        "name": "Idempotency-Key",
+        "in": "header",
+        "required": true,
+        "description": "Retained through nonterminal work and for seven days after terminal state. Reuse after expiry may create and charge a new request.",
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        }
+      },
+      "WebhookActionIdempotencyKey": {
+        "name": "Idempotency-Key",
+        "in": "header",
+        "required": true,
+        "description": "Makes a webhook action safe to retry. Endpoint-creation keys replay while the original signing key remains current, conflict after secret rotation, and remain as tombstones for seven days after deletion. Replay keys remain bound until the 30-day delivery history expires. Rotation keys replay only while their returned key is still current.",
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "pattern": "^[ -~]+$"
+        }
+      },
+      "Prefer": {
+        "name": "Prefer",
+        "in": "header",
+        "required": false,
+        "description": "Supports respond-async or wait=N, where N is from 0 through 10 seconds.",
+        "schema": {
+          "type": "string",
+          "maxLength": 100
+        }
+      },
+      "IfNoneMatch": {
+        "name": "If-None-Match",
+        "in": "header",
+        "required": false,
+        "description": "Return 304 when the current representation matches this entity tag.",
+        "schema": {
+          "type": "string",
+          "maxLength": 500
+        }
+      },
+      "TranscriptId": {
+        "name": "transcript_id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "pattern": "^tr_[A-Za-z0-9]+$"
+        }
+      },
+      "BatchId": {
+        "name": "batch_id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "pattern": "^bat_[A-Za-z0-9]+$"
+        }
+      },
+      "WebhookEndpointId": {
+        "name": "webhook_endpoint_id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "pattern": "^whe_[A-Za-z0-9]+$"
+        }
+      },
+      "WebhookDeliveryId": {
+        "name": "webhook_delivery_id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "pattern": "^whd_[A-Za-z0-9]+$"
+        }
+      },
+      "ApiKeyId": {
+        "name": "api_key_id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "pattern": "^key_[A-Za-z0-9]+$"
+        }
+      },
+      "CheckoutSessionId": {
+        "name": "checkout_session_id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "pattern": "^cs_[A-Za-z0-9_]{2,197}$"
+        }
+      },
+      "BillingReceiptId": {
+        "name": "billing_receipt_id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "pattern": "^(?:pur|cs|bir)_[A-Za-z0-9_]{2,197}$"
+        }
+      },
+      "Cursor": {
+        "name": "cursor",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "type": "string",
+          "maxLength": 1000
+        }
+      },
+      "Limit": {
+        "name": "limit",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200,
+          "default": 50
+        }
+      }
+    },
+    "headers": {
+      "Location": {
+        "schema": {
+          "type": "string",
+          "format": "uri-reference"
+        }
+      },
+      "ETag": {
+        "schema": {
+          "type": "string"
+        }
+      },
+      "ThumbnailCache": {
+        "description": "Whether this request materialized the thumbnail, served stored bytes, or joined work already in progress.",
+        "schema": {
+          "type": "string",
+          "enum": [
+            "miss",
+            "hit",
+            "coalesced"
+          ]
+        }
+      },
+      "RequestId": {
+        "schema": {
+          "type": "string",
+          "pattern": "^req_[A-Za-z0-9]+$"
+        }
+      },
+      "CreditsCharged": {
+        "schema": {
+          "type": "integer",
+          "enum": [
+            0,
+            1
+          ]
+        }
+      },
+      "RetryAfter": {
+        "schema": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "RateLimitLimit": {
+        "description": "Published request limit for the current account window. The limit can increase after the account receives its first verified purchase grant.",
+        "schema": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "RateLimitRemaining": {
+        "description": "Requests remaining in the current account window.",
+        "schema": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "RateLimitReset": {
+        "description": "UTC epoch seconds when the current account window resets.",
+        "schema": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "responses": {
+      "BadRequest": {
+        "$ref": "#/components/responses/ProblemResponse"
+      },
+      "Unauthorized": {
+        "$ref": "#/components/responses/ProblemResponse"
+      },
+      "Forbidden": {
+        "$ref": "#/components/responses/ProblemResponse"
+      },
+      "PaymentRequired": {
+        "$ref": "#/components/responses/ProblemResponse"
+      },
+      "NotFound": {
+        "$ref": "#/components/responses/ProblemResponse"
+      },
+      "Conflict": {
+        "$ref": "#/components/responses/ProblemResponse"
+      },
+      "Gone": {
+        "$ref": "#/components/responses/ProblemResponse"
+      },
+      "TooLarge": {
+        "$ref": "#/components/responses/ProblemResponse"
+      },
+      "Unprocessable": {
+        "$ref": "#/components/responses/ProblemResponse"
+      },
+      "Limited": {
+        "$ref": "#/components/responses/RetryableProblemResponse"
+      },
+      "Unavailable": {
+        "$ref": "#/components/responses/RetryableProblemResponse"
+      },
+      "Internal": {
+        "$ref": "#/components/responses/RetryableProblemResponse"
+      },
+      "NotModified": {
+        "description": "Representation has not changed",
+        "headers": {
+          "ETag": {
+            "$ref": "#/components/headers/ETag"
+          },
+          "X-Request-Id": {
+            "$ref": "#/components/headers/RequestId"
+          },
+          "X-RateLimit-Limit": {
+            "$ref": "#/components/headers/RateLimitLimit"
+          },
+          "X-RateLimit-Remaining": {
+            "$ref": "#/components/headers/RateLimitRemaining"
+          },
+          "X-RateLimit-Reset": {
+            "$ref": "#/components/headers/RateLimitReset"
+          }
+        }
+      },
+      "ProblemResponse": {
+        "description": "RFC 9457 problem details",
+        "headers": {
+          "X-Request-Id": {
+            "$ref": "#/components/headers/RequestId"
+          },
+          "X-Credits-Charged": {
+            "$ref": "#/components/headers/CreditsCharged"
+          },
+          "X-RateLimit-Limit": {
+            "$ref": "#/components/headers/RateLimitLimit"
+          },
+          "X-RateLimit-Remaining": {
+            "$ref": "#/components/headers/RateLimitRemaining"
+          },
+          "X-RateLimit-Reset": {
+            "$ref": "#/components/headers/RateLimitReset"
+          }
+        },
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        }
+      },
+      "RetryableProblemResponse": {
+        "description": "Retryable RFC 9457 problem details",
+        "headers": {
+          "X-Request-Id": {
+            "$ref": "#/components/headers/RequestId"
+          },
+          "X-Credits-Charged": {
+            "$ref": "#/components/headers/CreditsCharged"
+          },
+          "Retry-After": {
+            "$ref": "#/components/headers/RetryAfter"
+          },
+          "X-RateLimit-Limit": {
+            "$ref": "#/components/headers/RateLimitLimit"
+          },
+          "X-RateLimit-Remaining": {
+            "$ref": "#/components/headers/RateLimitRemaining"
+          },
+          "X-RateLimit-Reset": {
+            "$ref": "#/components/headers/RateLimitReset"
+          }
+        },
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            },
+            "examples": {
+              "rateLimited": {
+                "$ref": "#/components/examples/RateLimitedProblem"
+              }
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "ServiceLevelPeriod": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["object", "service_level", "scope", "target_percent", "period_start", "period_end", "evaluated_at", "status", "availability_percent", "coverage", "synthetic", "operations", "incidents"],
+        "properties": {
+          "object": { "type": "string", "const": "service_level_period" },
+          "service_level": { "type": "string", "const": "api_cached_delivery" },
+          "scope": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["api_and_cached_delivery", "uncached_extraction"],
+            "properties": {
+              "api_and_cached_delivery": { "type": "boolean", "const": true },
+              "uncached_extraction": { "type": "boolean", "const": false }
+            }
+          },
+          "target_percent": { "type": "number", "const": 99.5 },
+          "period_start": { "type": "string", "format": "date-time" },
+          "period_end": { "type": "string", "format": "date-time" },
+          "evaluated_at": { "type": "string", "format": "date-time" },
+          "status": { "type": "string", "enum": ["measuring", "met", "missed", "unknown"] },
+          "availability_percent": { "type": ["number", "null"], "minimum": 0, "maximum": 100 },
+          "coverage": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["expected_minutes", "observed_minutes", "missing_minutes", "excluded_maintenance_minutes"],
+            "properties": {
+              "expected_minutes": { "type": "integer", "minimum": 0 },
+              "observed_minutes": { "type": "integer", "minimum": 0 },
+              "missing_minutes": { "type": "integer", "minimum": 0 },
+              "excluded_maintenance_minutes": { "type": "integer", "minimum": 0 }
+            }
+          },
+          "synthetic": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["available_minutes", "unavailable_minutes", "missing_minutes", "availability_percent"],
+            "properties": {
+              "available_minutes": { "type": "integer", "minimum": 0 },
+              "unavailable_minutes": { "type": "integer", "minimum": 0 },
+              "missing_minutes": { "type": "integer", "minimum": 0 },
+              "availability_percent": { "type": ["number", "null"], "minimum": 0, "maximum": 100 }
+            }
+          },
+          "operations": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["eligible", "successful", "internal_failures", "pending", "excluded_source", "excluded_customer", "availability_percent", "latency", "objective_percent", "status"],
+            "properties": {
+              "eligible": { "type": "integer", "minimum": 0 },
+              "successful": { "type": "integer", "minimum": 0 },
+              "internal_failures": { "type": "integer", "minimum": 0 },
+              "pending": { "type": "integer", "minimum": 0 },
+              "excluded_source": { "type": "integer", "minimum": 0 },
+              "excluded_customer": { "type": "integer", "minimum": 0 },
+              "availability_percent": { "type": ["number", "null"], "minimum": 0, "maximum": 100 },
+              "latency": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["objective_ms", "target_percent", "samples", "within_objective", "attainment_percent", "status"],
+                "properties": {
+                  "objective_ms": { "type": "integer", "const": 30000 },
+                  "target_percent": { "type": "number", "const": 95 },
+                  "samples": { "type": "integer", "minimum": 0 },
+                  "within_objective": { "type": "integer", "minimum": 0 },
+                  "attainment_percent": { "type": ["number", "null"], "minimum": 0, "maximum": 100 },
+                  "status": { "type": "string", "enum": ["met", "missed", "unknown"] }
+                }
+              },
+              "objective_percent": { "type": "number", "const": 99.5 },
+              "status": { "type": "string", "enum": ["measuring", "met", "missed", "unknown"] }
+            }
+          },
+          "incidents": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["count", "minutes"],
+            "properties": {
+              "count": { "type": "integer", "minimum": 0 },
+              "minutes": { "type": "integer", "minimum": 0 }
+            }
+          }
+        }
+      },
+      "ServiceStatus": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["object", "status", "components", "incidents", "observed_at", "stale"],
+        "properties": {
+          "object": { "type": "string", "const": "service_status" },
+          "status": { "type": "string", "enum": ["operational", "degraded", "major_outage", "unknown"] },
+          "components": {
+            "type": "array",
+            "minItems": 3,
+            "maxItems": 3,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["id", "name", "status"],
+              "properties": {
+                "id": { "type": "string", "enum": ["api", "transcript_processing", "webhook_delivery"] },
+                "name": { "type": "string", "enum": ["API", "Transcript processing", "Webhook delivery"] },
+                "status": { "type": "string", "enum": ["operational", "degraded", "major_outage", "unknown"] }
+              }
+            }
+          },
+          "incidents": {
+            "type": "array",
+            "maxItems": 10,
+            "items": { "$ref": "#/components/schemas/ServiceIncident" }
+          },
+          "observed_at": { "type": ["string", "null"], "format": "date-time" },
+          "stale": { "type": "boolean" }
+        }
+      },
+      "ServiceIncident": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "object", "title", "impact", "status", "components", "created_at", "updated_at", "resolved_at", "updates"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^inc_[0-9a-f]{32}$" },
+          "object": { "type": "string", "const": "service_incident" },
+          "title": { "type": "string", "minLength": 1, "maxLength": 160 },
+          "impact": { "type": "string", "enum": ["degraded", "partial_outage", "major_outage", "maintenance"] },
+          "status": { "type": "string", "enum": ["investigating", "identified", "monitoring", "resolved"] },
+          "components": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 3,
+            "uniqueItems": true,
+            "items": { "type": "string", "enum": ["api", "transcript_processing", "webhook_delivery"] }
+          },
+          "created_at": { "type": "string", "format": "date-time" },
+          "updated_at": { "type": "string", "format": "date-time" },
+          "resolved_at": { "type": ["string", "null"], "format": "date-time" },
+          "updates": {
+            "type": "array",
+            "maxItems": 20,
+            "items": { "$ref": "#/components/schemas/ServiceIncidentUpdate" }
+          }
+        }
+      },
+      "ServiceIncidentUpdate": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "object", "status", "message", "created_at"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^inu_[0-9a-f]{32}$" },
+          "object": { "type": "string", "const": "service_incident_update" },
+          "status": { "type": "string", "enum": ["investigating", "identified", "monitoring", "resolved"] },
+          "message": { "type": "string", "minLength": 1, "maxLength": 2000 },
+          "created_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "CreditBalance": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["granted", "remaining", "reserved", "spendable", "used"],
+        "properties": {
+          "granted": { "type": "integer", "minimum": 0 },
+          "remaining": { "type": "integer", "minimum": 0, "description": "Unspent credits, including current reservations." },
+          "reserved": { "type": "integer", "minimum": 0 },
+          "spendable": { "type": "integer", "minimum": 0, "description": "Credits available for new admission after reservations." },
+          "used": { "type": "integer", "minimum": 0 }
+        }
+      },
+      "AccountFunding": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["status", "debt_credits"],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": ["active", "suspended"],
+            "description": "Whether the account may admit new transcript and batch work."
+          },
+          "debt_credits": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Consumed credits later reversed by a refund or chargeback and not yet reconciled."
+          }
+        }
+      },
+      "Account": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "object", "status", "credits", "funding", "created_at", "updated_at"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^acct_[A-Za-z0-9]+$" },
+          "object": { "type": "string", "const": "account" },
+          "status": { "type": "string", "enum": ["active", "suspended", "closed"] },
+          "credits": { "$ref": "#/components/schemas/CreditBalance" },
+          "funding": { "$ref": "#/components/schemas/AccountFunding" },
+          "created_at": { "type": "string", "format": "date-time" },
+          "updated_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "OwnerSession": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["object", "account", "user"],
+        "properties": {
+          "object": { "type": "string", "const": "owner_session" },
+          "account": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "status", "role"],
+            "properties": {
+              "id": { "type": "string", "pattern": "^acct_[A-Za-z0-9]+$" },
+              "status": { "type": "string", "const": "active" },
+              "role": { "type": "string", "enum": ["owner", "admin", "member"] }
+            }
+          },
+          "user": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["email", "first_name", "last_name"],
+            "properties": {
+              "email": { "type": "string", "format": "email", "maxLength": 320 },
+              "first_name": { "type": ["string", "null"] },
+              "last_name": { "type": ["string", "null"] }
+            }
+          }
+        }
+      },
+      "AccountConfirmation": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["confirmation"],
+        "properties": {
+          "confirmation": {
+            "type": "string",
+            "pattern": "^acct_[A-Za-z0-9]+$",
+            "description": "Must exactly equal the account ID in the authenticated owner session."
+          }
+        }
+      },
+      "AccountClosure": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "object", "account_id", "status", "accepted_at"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^acl_[A-Za-z0-9]+$" },
+          "object": { "type": "string", "const": "account_closure" },
+          "account_id": { "type": "string", "pattern": "^acct_[A-Za-z0-9]+$" },
+          "status": { "type": "string", "enum": ["pending", "processing", "completed"] },
+          "accepted_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "Money": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["total", "currency"],
+        "properties": {
+          "total": { "type": "integer", "minimum": 0 },
+          "currency": { "type": "string", "pattern": "^[a-z]{3}$" }
+        }
+      },
+      "BillingReceiptAmount": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["total", "refunded", "disputed", "currency"],
+        "properties": {
+          "total": { "type": "integer", "minimum": 1 },
+          "refunded": { "type": "integer", "minimum": 0 },
+          "disputed": { "type": "integer", "minimum": 0 },
+          "currency": { "type": "string", "pattern": "^[a-z]{3}$" }
+        }
+      },
+      "BillingCatalog": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["object", "checkout_status", "plans", "subscription", "top_ups"],
+        "properties": {
+          "object": { "type": "string", "const": "billing_catalog" },
+          "checkout_status": { "type": "string", "enum": ["available", "reconciliation_delayed"] },
+          "plans": {
+            "type": "array",
+            "maxItems": 2,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["plan", "price_version", "credits_per_period", "credit_interval", "billing_interval", "periods_per_billing_cycle", "amount"],
+              "properties": {
+                "plan": { "type": "string", "enum": ["monthly", "annual"] },
+                "price_version": { "type": "string", "pattern": "^pricev_[a-z0-9_]{1,64}$" },
+                "credits_per_period": { "type": "integer", "const": 1000 },
+                "credit_interval": { "type": "string", "const": "month" },
+                "billing_interval": { "type": "string", "enum": ["month", "year"] },
+                "periods_per_billing_cycle": { "type": "integer", "enum": [1, 12] },
+                "amount": { "$ref": "#/components/schemas/Money" }
+              }
+            }
+          },
+          "subscription": {
+            "oneOf": [
+              { "type": "null" },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["plan", "status", "cancel_at_period_end", "current_period_end"],
+                "properties": {
+                  "plan": { "type": "string", "enum": ["monthly", "annual"] },
+                  "status": { "type": "string", "enum": ["incomplete", "incomplete_expired", "trialing", "active", "past_due", "canceled", "unpaid", "paused"] },
+                  "cancel_at_period_end": { "type": "boolean" },
+                  "current_period_end": { "type": "string", "format": "date-time" }
+                }
+              }
+            ]
+          },
+          "top_ups": {
+            "type": "array",
+            "maxItems": 10,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["plan", "price_version", "credits", "amount"],
+              "properties": {
+                "plan": { "type": "string", "enum": ["monthly", "annual"] },
+                "price_version": { "type": "string", "pattern": "^pricev_[a-z0-9_]{1,64}$" },
+                "credits": { "type": "integer", "const": 1000 },
+                "amount": { "$ref": "#/components/schemas/Money" }
+              }
+            }
+          }
+        }
+      },
+      "BillingSubscription": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["object", "plan", "status", "cancel_at_period_end", "current_period_end"],
+        "properties": {
+          "object": { "type": "string", "const": "billing_subscription" },
+          "plan": { "type": "string", "enum": ["monthly", "annual"] },
+          "status": { "type": "string", "enum": ["incomplete", "incomplete_expired", "trialing", "active", "past_due", "canceled", "unpaid", "paused"] },
+          "cancel_at_period_end": { "type": "boolean", "const": true },
+          "current_period_end": { "type": "string", "format": "date-time" }
+        }
+      },
+      "CreateBillingCheckoutRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["price_version"],
+        "properties": {
+          "price_version": { "type": "string", "pattern": "^pricev_[a-z0-9_]{1,64}$" }
+        }
+      },
+      "BillingCheckout": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "object", "status", "payment_status", "url", "expires_at", "created"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^cs_[A-Za-z0-9_]{2,197}$" },
+          "object": { "type": "string", "const": "checkout_session" },
+          "status": { "type": "string", "enum": ["open", "complete", "expired"] },
+          "payment_status": { "type": "string", "enum": ["paid", "unpaid", "no_payment_required"] },
+          "url": { "type": ["string", "null"], "format": "uri", "maxLength": 2048 },
+          "expires_at": { "type": "string", "format": "date-time" },
+          "created": { "type": "boolean" }
+        }
+      },
+      "BillingReceipt": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "object", "checkout_session_id", "type", "plan", "status", "credits", "amount", "paid_at", "created_at", "updated_at"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^(?:pur|cs|bir)_[A-Za-z0-9_]+$" },
+          "object": { "type": "string", "const": "billing_receipt" },
+          "checkout_session_id": { "type": ["string", "null"], "pattern": "^cs_[A-Za-z0-9_]{2,197}$" },
+          "type": { "type": "string", "enum": ["one_time", "subscription", "top_up"] },
+          "plan": { "type": ["string", "null"], "enum": ["monthly", "annual", null] },
+          "status": { "type": "string", "enum": ["pending", "paid", "refunded", "disputed", "failed", "reconciliation_delayed"] },
+          "credits": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["purchased", "refunded", "disputed"],
+            "properties": {
+              "purchased": { "type": "integer", "minimum": 1 },
+              "refunded": { "type": "integer", "minimum": 0 },
+              "disputed": { "type": "integer", "minimum": 0 }
+            }
+          },
+          "amount": { "$ref": "#/components/schemas/BillingReceiptAmount" },
+          "paid_at": { "type": ["string", "null"], "format": "date-time" },
+          "created_at": { "type": "string", "format": "date-time" },
+          "updated_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "BillingReceiptPage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["items", "next_cursor"],
+        "properties": {
+          "items": { "type": "array", "maxItems": 200, "items": { "$ref": "#/components/schemas/BillingReceipt" } },
+          "next_cursor": { "type": ["string", "null"] }
+        }
+      },
+      "ApiKeyScope": {
+        "type": "string",
+        "enum": [
+          "account:read",
+          "api_keys:read",
+          "api_keys:write",
+          "analytics:read",
+          "batches:read",
+          "batches:write",
+          "transcripts:read",
+          "transcripts:write",
+          "webhooks:read",
+          "webhooks:write"
+        ]
+      },
+      "CreateApiKeyRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "scopes"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1, "maxLength": 100 },
+          "scopes": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 10,
+            "uniqueItems": true,
+            "items": { "$ref": "#/components/schemas/ApiKeyScope" }
+          },
+          "expires_at": {
+            "type": ["string", "null"],
+            "format": "date-time",
+            "description": "Optional UTC expiry. Omit or set null for no expiry."
+          }
+        }
+      },
+      "ApiKey": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "object", "name", "scopes", "status", "current", "created_at", "expires_at", "last_used_at", "revoked_at"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^key_[A-Za-z0-9]+$" },
+          "object": { "type": "string", "const": "api_key" },
+          "name": { "type": "string", "minLength": 1, "maxLength": 100 },
+          "scopes": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 10,
+            "uniqueItems": true,
+            "items": { "$ref": "#/components/schemas/ApiKeyScope" }
+          },
+          "status": { "type": "string", "enum": ["active", "expired", "revoked"] },
+          "current": { "type": "boolean" },
+          "created_at": { "type": "string", "format": "date-time" },
+          "expires_at": { "type": ["string", "null"], "format": "date-time" },
+          "last_used_at": { "type": ["string", "null"], "format": "date-time", "description": "Updated at most once every 15 minutes." },
+          "revoked_at": { "type": ["string", "null"], "format": "date-time" }
+        }
+      },
+      "ApiKeyWithSecret": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "object", "name", "scopes", "status", "current", "created_at", "expires_at", "last_used_at", "revoked_at", "secret"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^key_[A-Za-z0-9]+$" },
+          "object": { "type": "string", "const": "api_key" },
+          "name": { "type": "string", "minLength": 1, "maxLength": 100 },
+          "scopes": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 10,
+            "uniqueItems": true,
+            "items": { "$ref": "#/components/schemas/ApiKeyScope" }
+          },
+          "status": { "type": "string", "enum": ["active", "expired", "revoked"] },
+          "current": { "type": "boolean" },
+          "created_at": { "type": "string", "format": "date-time" },
+          "expires_at": { "type": ["string", "null"], "format": "date-time" },
+          "last_used_at": { "type": ["string", "null"], "format": "date-time", "description": "Updated at most once every 15 minutes." },
+          "revoked_at": { "type": ["string", "null"], "format": "date-time" },
+          "secret": {
+            "type": "string",
+            "pattern": "^tl_(?:live|test)_[A-Za-z0-9_-]{43}$",
+            "description": "Returned only by a successful create response."
+          }
+        }
+      },
+      "ApiKeyList": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["items", "limit"],
+        "properties": {
+          "items": {
+            "type": "array",
+            "maxItems": 20,
+            "items": { "$ref": "#/components/schemas/ApiKey" }
+          },
+          "limit": { "type": "integer", "const": 20 }
+        }
+      },
+      "ApiKeyRevocation": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["object", "account_id", "status", "revoked_at"],
+        "properties": {
+          "object": { "type": "string", "const": "api_key_revocation" },
+          "account_id": { "type": "string", "pattern": "^acct_[A-Za-z0-9]+$" },
+          "status": { "type": "string", "const": "completed" },
+          "revoked_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "SourceReference": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "maxLength": 2048,
+            "description": "URL from a supported source platform. It is parsed to a canonical identity and never fetched as a generic URL."
+          },
+          "platform": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,31}$",
+            "description": "Registered source platform. YouTube is the first supported value."
+          },
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9._~-]+$",
+            "description": "Canonical route-safe source ID. The selected source Adapter validates or derives it from the provider identity."
+          }
+        },
+        "oneOf": [
+          {
+            "required": ["url"],
+            "not": {
+              "anyOf": [
+                { "required": ["platform"] },
+                { "required": ["id"] }
+              ]
+            }
+          },
+          {
+            "required": ["platform", "id"],
+            "not": { "required": ["url"] }
+          }
+        ]
+      },
+      "CreateTranscriptCore": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["source"],
+        "properties": {
+          "source": {
+            "$ref": "#/components/schemas/SourceReference"
+          },
+          "track_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          },
+          "language_preferences": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 10,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 35
+            }
+          },
+          "caption_kinds": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 3,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "manual",
+                "automatic",
+                "unknown"
+              ]
+            },
+            "default": [
+              "manual",
+              "automatic",
+              "unknown"
+            ]
+          },
+          "language_fallback": {
+            "type": "string",
+            "enum": [
+              "none",
+              "any"
+            ],
+            "default": "none"
+          },
+          "content_format": {
+            "type": "string",
+            "enum": [
+              "segments",
+              "text",
+              "both"
+            ],
+            "default": "segments"
+          },
+          "max_age_seconds": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 2592000,
+            "description": "Omit to accept any valid stored successful artifact. Zero forces a fresh observation."
+          },
+          "allow_stale_on_error": {
+            "type": "boolean",
+            "default": false
+          },
+          "include": {
+            "type": "array",
+            "maxItems": 2,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "metadata",
+                "available_tracks"
+              ]
+            }
+          },
+          "reference": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100,
+            "description": "Allowed only on a batch item."
+          },
+          "webhook_endpoint_id": {
+            "type": "string",
+            "pattern": "^whe_[A-Za-z0-9]+$",
+            "description": "Allowed only on a single request; a batch sets one endpoint at the batch level."
+          }
+        },
+        "allOf": [
+          {
+            "not": {
+              "required": [
+                "track_id",
+                "language_preferences"
+              ]
+            }
+          },
+          {
+            "not": {
+              "required": [
+                "track_id",
+                "caption_kinds"
+              ]
+            }
+          },
+          {
+            "not": {
+              "required": [
+                "track_id",
+                "language_fallback"
+              ]
+            }
+          },
+          {
+            "if": {
+              "required": [
+                "allow_stale_on_error"
+              ],
+              "properties": {
+                "allow_stale_on_error": {
+                  "const": true
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "max_age_seconds"
+              ]
+            }
+          }
+        ]
+      },
+      "CreateTranscriptRequest": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/CreateTranscriptCore"
+          },
+          {
+            "not": {
+              "required": [
+                "reference"
+              ]
+            }
+          }
+        ]
+      },
+      "Source": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "platform",
+          "id",
+          "url"
+        ],
+        "properties": {
+          "platform": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,31}$"
+          },
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9._~-]+$"
+          },
+          "url": {
+            "type": "string",
+            "format": "uri"
+          }
+        }
+      },
+      "Track": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "language",
+          "name",
+          "kind"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "maxLength": 300
+          },
+          "language": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 35
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 300
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "manual",
+              "automatic",
+              "unknown"
+            ]
+          },
+          "fallback_applied": {
+            "type": "boolean"
+          }
+        }
+      },
+      "Segment": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "start_ms",
+          "duration_ms",
+          "text"
+        ],
+        "properties": {
+          "start_ms": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "duration_ms": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "text": {
+            "type": "string",
+            "x-max-utf8-bytes": 8388608
+          }
+        }
+      },
+      "TranscriptContent": {
+        "type": "object",
+        "x-max-serialized-bytes": 16777216,
+        "additionalProperties": false,
+        "required": [
+          "url",
+          "available_formats",
+          "included"
+        ],
+        "properties": {
+          "url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "available_formats": {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 4,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "text",
+                "json",
+                "srt",
+                "vtt"
+              ]
+            }
+          },
+          "included": {
+            "type": "string",
+            "enum": [
+              "none",
+              "segments",
+              "text",
+              "both"
+            ]
+          },
+          "text": {
+            "type": "string",
+            "x-max-utf8-bytes": 8388608
+          },
+          "segments": {
+            "type": "array",
+            "maxItems": 100000,
+            "items": {
+              "$ref": "#/components/schemas/Segment"
+            }
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "included": {
+                  "const": "none"
+                }
+              }
+            },
+            "then": {
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "text"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "segments"
+                    ]
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "included": {
+                  "const": "text"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "text"
+              ],
+              "not": {
+                "required": [
+                  "segments"
+                ]
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "included": {
+                  "const": "segments"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "segments"
+              ],
+              "not": {
+                "required": [
+                  "text"
+                ]
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "included": {
+                  "const": "both"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "text",
+                "segments"
+              ]
+            }
+          }
+        ]
+      },
+      "Retrieval": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "cache_status",
+          "observed_at",
+          "access_validated_at",
+          "access_validation_age_seconds",
+          "cache_age_seconds",
+          "stale",
+          "source_market",
+          "content_sha256"
+        ],
+        "properties": {
+          "cache_status": {
+            "type": "string",
+            "enum": [
+              "hit",
+              "miss",
+              "refresh"
+            ]
+          },
+          "observed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "access_validated_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Most recent successful anonymous source-access check. This is separate from caption observed_at."
+          },
+          "access_validation_age_seconds": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 604800
+          },
+          "cache_age_seconds": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "stale": {
+            "type": "boolean"
+          },
+          "source_market": {
+            "type": "string",
+            "pattern": "^[A-Z]{2}$",
+            "description": "Two-letter source access market used for this observation."
+          },
+          "content_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "refresh_error": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/OutcomeError"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "stale": {
+                  "const": true
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "refresh_error"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "stale": {
+                  "const": false
+                }
+              }
+            },
+            "then": {
+              "not": {
+                "required": [
+                  "refresh_error"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "Usage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "credits_charged"
+        ],
+        "properties": {
+          "credits_charged": {
+            "type": "integer",
+            "enum": [
+              0,
+              1
+            ]
+          }
+        }
+      },
+      "Transcript": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "request_id",
+          "object",
+          "status",
+          "source",
+          "requested",
+          "usage",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^tr_[A-Za-z0-9]+$"
+          },
+          "request_id": {
+            "type": "string",
+            "pattern": "^req_[A-Za-z0-9]+$"
+          },
+          "object": {
+            "type": "string",
+            "const": "transcript"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "processing",
+              "completed",
+              "failed",
+              "cancelled"
+            ]
+          },
+          "source": {
+            "$ref": "#/components/schemas/Source"
+          },
+          "requested": {
+            "$ref": "#/components/schemas/CreateTranscriptCore"
+          },
+          "track": {
+            "$ref": "#/components/schemas/Track"
+          },
+          "available_tracks": {
+            "type": "array",
+            "maxItems": 1000,
+            "items": {
+              "$ref": "#/components/schemas/Track"
+            }
+          },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "title": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "maxLength": 1000
+              },
+              "creator_id": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "maxLength": 128
+              },
+              "creator_name": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "maxLength": 1000
+              },
+              "duration_ms": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "minimum": 0
+              },
+              "thumbnail_url": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "uri"
+              }
+            }
+          },
+          "content": {
+            "$ref": "#/components/schemas/TranscriptContent"
+          },
+          "retrieval": {
+            "$ref": "#/components/schemas/Retrieval"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/Usage"
+          },
+          "poll_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "error": {
+            "$ref": "#/components/schemas/OutcomeError"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "completed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "access_expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Caption-content access ends at this instant. Present only for completed transcripts."
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "status": {
+                  "const": "completed"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "track",
+                "content",
+                "retrieval",
+                "completed_at",
+                "access_expires_at"
+              ],
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "error"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "poll_url"
+                    ]
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "status": {
+                  "const": "failed"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "error",
+                "completed_at"
+              ],
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "track"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "content"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "retrieval"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "poll_url"
+                    ]
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "status": {
+                  "const": "completed"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "usage": {
+                  "properties": {
+                    "credits_charged": {
+                      "const": 1
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "status": {
+                  "enum": [
+                    "queued",
+                    "processing",
+                    "failed",
+                    "cancelled"
+                  ]
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "usage": {
+                  "properties": {
+                    "credits_charged": {
+                      "const": 0
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "status": {
+                  "enum": [
+                    "queued",
+                    "processing"
+                  ]
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "poll_url"
+              ],
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "track"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "content"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "retrieval"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "error"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "completed_at"
+                    ]
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "status": {
+                  "const": "cancelled"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "completed_at"
+              ],
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "track"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "content"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "retrieval"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "error"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "poll_url"
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "TerminalTranscript": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Transcript"
+          },
+          {
+            "properties": {
+              "status": {
+                "enum": [
+                  "completed",
+                  "failed"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "PendingTranscript": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Transcript"
+          },
+          {
+            "properties": {
+              "status": {
+                "enum": [
+                  "queued",
+                  "processing"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "TranscriptReferenceOnly": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Transcript"
+          },
+          {
+            "if": {
+              "properties": {
+                "status": {
+                  "const": "completed"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "content": {
+                  "properties": {
+                    "included": {
+                      "const": "none"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ]
+      },
+      "TranscriptPage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "maxItems": 200,
+            "items": {
+              "$ref": "#/components/schemas/TranscriptReferenceOnly"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "CreateBatchItem": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/CreateTranscriptCore"
+          },
+          {
+            "required": [
+              "reference"
+            ],
+            "not": {
+              "required": [
+                "webhook_endpoint_id"
+              ]
+            }
+          }
+        ]
+      },
+      "CreateBatchRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1000,
+            "x-unique-by": [
+              "reference",
+              "normalized_source_and_selection"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/CreateBatchItem"
+            }
+          },
+          "webhook_endpoint_id": {
+            "type": "string",
+            "pattern": "^whe_[A-Za-z0-9]+$"
+          }
+        }
+      },
+      "BatchCounts": {
+        "type": "object",
+        "x-invariant": "queued + processing + completed + failed + cancelled equals total",
+        "additionalProperties": false,
+        "required": [
+          "total",
+          "queued",
+          "processing",
+          "completed",
+          "failed",
+          "cancelled"
+        ],
+        "properties": {
+          "total": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000
+          },
+          "queued": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "processing": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "completed": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "failed": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "cancelled": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "Batch": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "object",
+          "status",
+          "counts",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^bat_[A-Za-z0-9]+$"
+          },
+          "object": {
+            "type": "string",
+            "const": "batch"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "processing",
+              "cancelling",
+              "completed",
+              "cancelled"
+            ]
+          },
+          "counts": {
+            "$ref": "#/components/schemas/BatchCounts"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "completed_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "status": {
+                  "enum": [
+                    "completed",
+                    "cancelled"
+                  ]
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "completed_at"
+              ]
+            },
+            "else": {
+              "not": {
+                "required": [
+                  "completed_at"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "BatchPage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "maxItems": 200,
+            "items": {
+              "$ref": "#/components/schemas/Batch"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "VisibleBatchItem": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "position",
+          "reference",
+          "transcript"
+        ],
+        "properties": {
+          "position": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 999
+          },
+          "reference": {
+            "type": "string"
+          },
+          "transcript": {
+            "$ref": "#/components/schemas/TranscriptReferenceOnly"
+          }
+        }
+      },
+      "DeletedBatchItem": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "position",
+          "deleted"
+        ],
+        "properties": {
+          "position": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 999
+          },
+          "deleted": {
+            "type": "boolean",
+            "const": true
+          }
+        }
+      },
+      "BatchItem": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/VisibleBatchItem"
+          },
+          {
+            "$ref": "#/components/schemas/DeletedBatchItem"
+          }
+        ]
+      },
+      "BatchItemPage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "maxItems": 200,
+            "items": {
+              "$ref": "#/components/schemas/BatchItem"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "UsageEntry": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "transcript_id",
+          "credits",
+          "reason",
+          "created_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^use_[A-Za-z0-9]+$"
+          },
+          "transcript_id": {
+            "type": "string",
+            "pattern": "^tr_[A-Za-z0-9]+$"
+          },
+          "credits": {
+            "type": "integer",
+            "const": 1
+          },
+          "reason": {
+            "type": "string",
+            "const": "selected_track_completed"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "UsagePage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "maxItems": 200,
+            "items": {
+              "$ref": "#/components/schemas/UsageEntry"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "AccountAnalyticsMetrics": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "admitted", "completed", "failed", "cancelled", "credits",
+          "cache_hits", "cache_misses", "cache_refreshes", "stale_deliveries",
+          "latency_samples", "total_latency_ms", "segments", "content_bytes",
+          "completion_rate", "failure_rate", "cancellation_rate", "average_latency_ms",
+          "p50_latency_upper_bound_ms", "p95_latency_upper_bound_ms",
+          "p99_latency_upper_bound_ms", "latency_overflow_samples"
+        ],
+        "properties": {
+          "admitted": { "type": "integer", "minimum": 0 },
+          "completed": { "type": "integer", "minimum": 0 },
+          "failed": { "type": "integer", "minimum": 0 },
+          "cancelled": { "type": "integer", "minimum": 0 },
+          "credits": { "type": "integer", "minimum": 0 },
+          "cache_hits": { "type": "integer", "minimum": 0 },
+          "cache_misses": { "type": "integer", "minimum": 0 },
+          "cache_refreshes": { "type": "integer", "minimum": 0 },
+          "stale_deliveries": { "type": "integer", "minimum": 0 },
+          "latency_samples": { "type": "integer", "minimum": 0 },
+          "total_latency_ms": { "type": "integer", "minimum": 0 },
+          "segments": { "type": "integer", "minimum": 0 },
+          "content_bytes": { "type": "integer", "minimum": 0 },
+          "completion_rate": { "type": "number", "minimum": 0, "maximum": 1 },
+          "failure_rate": { "type": "number", "minimum": 0, "maximum": 1 },
+          "cancellation_rate": { "type": "number", "minimum": 0, "maximum": 1 },
+          "average_latency_ms": { "type": ["integer", "null"], "minimum": 0 },
+          "p50_latency_upper_bound_ms": { "type": ["integer", "null"], "minimum": 0 },
+          "p95_latency_upper_bound_ms": { "type": ["integer", "null"], "minimum": 0 },
+          "p99_latency_upper_bound_ms": { "type": ["integer", "null"], "minimum": 0 },
+          "latency_overflow_samples": { "type": "integer", "minimum": 0 }
+        }
+      },
+      "AccountAnalyticsHour": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "bucket_start", "admitted", "completed", "failed", "cancelled",
+          "credits", "cache_hits", "cache_misses", "cache_refreshes",
+          "stale_deliveries", "latency_samples", "total_latency_ms", "segments",
+          "content_bytes"
+        ],
+        "properties": {
+          "bucket_start": { "type": "string", "format": "date-time" },
+          "admitted": { "type": "integer", "minimum": 0 },
+          "completed": { "type": "integer", "minimum": 0 },
+          "failed": { "type": "integer", "minimum": 0 },
+          "cancelled": { "type": "integer", "minimum": 0 },
+          "credits": { "type": "integer", "minimum": 0 },
+          "cache_hits": { "type": "integer", "minimum": 0 },
+          "cache_misses": { "type": "integer", "minimum": 0 },
+          "cache_refreshes": { "type": "integer", "minimum": 0 },
+          "stale_deliveries": { "type": "integer", "minimum": 0 },
+          "latency_samples": { "type": "integer", "minimum": 0 },
+          "total_latency_ms": { "type": "integer", "minimum": 0 },
+          "segments": { "type": "integer", "minimum": 0 },
+          "content_bytes": { "type": "integer", "minimum": 0 }
+        }
+      },
+      "ExecutionAnalyticsMetrics": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "processing_samples", "source_samples", "diagnostic_samples",
+          "source_attempts", "capacity_waits", "average_queue_latency_ms",
+          "average_processing_latency_ms", "average_source_wait_ms",
+          "average_source_execution_ms"
+        ],
+        "properties": {
+          "processing_samples": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Terminal requests with coherent admission, processing, and completion timestamps. Queue and processing averages use this denominator."
+          },
+          "source_samples": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Terminal requests with a coherent last source-attempt timestamp. Source wait and source execution averages use this denominator."
+          },
+          "diagnostic_samples": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Terminal requests with recorded source-attempt and capacity-wait counters. Older requests can lack these diagnostics."
+          },
+          "source_attempts": { "type": "integer", "minimum": 0 },
+          "capacity_waits": { "type": "integer", "minimum": 0 },
+          "average_queue_latency_ms": { "type": ["integer", "null"], "minimum": 0 },
+          "average_processing_latency_ms": { "type": ["integer", "null"], "minimum": 0 },
+          "average_source_wait_ms": {
+            "type": ["integer", "null"],
+            "minimum": 0,
+            "description": "Mean time from processing start to the last source attempt. This includes durable scheduling, capacity waits, and earlier retries."
+          },
+          "average_source_execution_ms": {
+            "type": ["integer", "null"],
+            "minimum": 0,
+            "description": "Mean time from the last source attempt through source work, publication, and request settlement."
+          }
+        }
+      },
+      "AccountAnalyticsOutcome": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["outcome", "count"],
+        "properties": {
+          "outcome": { "type": "string", "minLength": 1, "maxLength": 128 },
+          "count": { "type": "integer", "minimum": 0 }
+        }
+      },
+      "AccountAnalyticsRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "transcript_id", "request_id", "status", "cache_status", "stale",
+          "error_code", "retryable", "credits_charged", "track_language",
+          "track_kind", "segment_count", "content_bytes", "total_latency_ms",
+          "queue_latency_ms", "processing_latency_ms",
+          "source_attempts", "capacity_waits", "source_last_attempt_at",
+          "created_at", "processing_at", "completed_at", "updated_at"
+        ],
+        "properties": {
+          "transcript_id": { "type": "string", "pattern": "^tr_[A-Za-z0-9]+$" },
+          "request_id": { "type": "string", "pattern": "^req_[A-Za-z0-9]+$" },
+          "status": { "type": "string", "enum": ["queued", "processing", "completed", "failed", "cancelled"] },
+          "cache_status": { "type": ["string", "null"], "enum": ["hit", "miss", "refresh", null] },
+          "stale": { "type": "boolean" },
+          "error_code": { "type": ["string", "null"], "maxLength": 128 },
+          "retryable": { "type": ["boolean", "null"] },
+          "credits_charged": { "type": "integer", "enum": [0, 1] },
+          "track_language": { "type": ["string", "null"], "maxLength": 35 },
+          "track_kind": { "type": ["string", "null"], "enum": ["manual", "automatic", null] },
+          "segment_count": { "type": ["integer", "null"], "minimum": 0 },
+          "content_bytes": { "type": ["integer", "null"], "minimum": 0 },
+          "total_latency_ms": { "type": ["integer", "null"], "minimum": 0 },
+          "queue_latency_ms": { "type": ["integer", "null"], "minimum": 0 },
+          "processing_latency_ms": { "type": ["integer", "null"], "minimum": 0 },
+          "source_attempts": {
+            "type": ["integer", "null"],
+            "minimum": 0,
+            "maximum": 20,
+            "description": "Extractor or access-check attempts that reached source work and consumed the retry budget. Cache-only reads are zero. A null value means no exact source-settlement diagnostic is available."
+          },
+          "capacity_waits": {
+            "type": ["integer", "null"],
+            "minimum": 0,
+            "maximum": 1000000,
+            "description": "Extractor dispatches refused before source access because the proxy fleet had no capacity. These waits do not consume the source retry budget. A null value means no exact source-settlement diagnostic is available."
+          },
+          "source_last_attempt_at": {
+            "type": ["string", "null"],
+            "format": "date-time",
+            "description": "Time of the last extractor or access-check dispatch, including a dispatch refused for capacity. A null value means no source dispatch occurred or no exact source-settlement diagnostic is available."
+          },
+          "created_at": { "type": "string", "format": "date-time" },
+          "processing_at": { "type": ["string", "null"], "format": "date-time" },
+          "completed_at": { "type": ["string", "null"], "format": "date-time" },
+          "updated_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "AccountAnalyticsOverview": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["window_hours", "observed_at", "totals", "execution", "series", "outcomes", "recent_requests"],
+        "properties": {
+          "window_hours": { "type": "integer", "enum": [24, 168, 720] },
+          "observed_at": { "type": "string", "format": "date-time" },
+          "totals": { "$ref": "#/components/schemas/AccountAnalyticsMetrics" },
+          "execution": { "$ref": "#/components/schemas/ExecutionAnalyticsMetrics" },
+          "series": {
+            "type": "array",
+            "maxItems": 720,
+            "items": { "$ref": "#/components/schemas/AccountAnalyticsHour" }
+          },
+          "outcomes": {
+            "type": "array",
+            "maxItems": 20,
+            "items": { "$ref": "#/components/schemas/AccountAnalyticsOutcome" }
+          },
+          "recent_requests": {
+            "type": "array",
+            "maxItems": 25,
+            "items": { "$ref": "#/components/schemas/AccountAnalyticsRequest" }
+          }
+        }
+      },
+      "CreateWebhookEndpointRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "url"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "maxLength": 2048,
+            "description": "HTTPS port 443 URL with a public DNS hostname, no userinfo, and no fragment."
+          }
+        }
+      },
+      "WebhookEndpoint": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "object",
+          "name",
+          "url",
+          "status",
+          "signing_key_id",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^whe_[A-Za-z0-9]+$"
+          },
+          "object": {
+            "type": "string",
+            "const": "webhook_endpoint"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending_verification",
+              "enabled"
+            ]
+          },
+          "signing_key_id": {
+            "type": "string",
+            "pattern": "^whk_[A-Za-z0-9]+$"
+          },
+          "signing_secret": {
+            "type": "string",
+            "pattern": "^whsec_[A-Za-z0-9_-]+$",
+            "readOnly": true,
+            "description": "Returned only by endpoint creation or an idempotent secret-rotation response."
+          },
+          "previous_signing_key_id": {
+            "type": "string",
+            "pattern": "^whk_[A-Za-z0-9]+$"
+          },
+          "previous_secret_expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "verified_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "last_verification_attempt_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "last_verification_error": {
+            "type": "string",
+            "maxLength": 100
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "WebhookEndpointWithSecret": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/WebhookEndpoint"
+          },
+          {
+            "required": [
+              "signing_secret"
+            ]
+          }
+        ]
+      },
+      "WebhookEndpointList": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "maxItems": 100,
+            "items": {
+              "$ref": "#/components/schemas/WebhookEndpoint"
+            }
+          }
+        }
+      },
+      "WebhookDeliveryAttempt": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "number",
+          "attempted_at",
+          "duration_ms"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^wha_[A-Za-z0-9]+$"
+          },
+          "number": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 7
+          },
+          "attempted_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "duration_ms": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "http_status": {
+            "type": "integer",
+            "minimum": 100,
+            "maximum": 599
+          },
+          "error": {
+            "type": "string",
+            "enum": [
+              "dns_rejected",
+              "tls_error",
+              "timeout",
+              "network_error",
+              "transport_error",
+              "response_too_large",
+              "protocol_error"
+            ]
+          }
+        },
+        "oneOf": [
+          {
+            "required": [
+              "http_status"
+            ]
+          },
+          {
+            "required": [
+              "error"
+            ]
+          }
+        ]
+      },
+      "WebhookDelivery": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "object",
+          "endpoint_id",
+          "event",
+          "status",
+          "attempt_count",
+          "attempts",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^whd_[A-Za-z0-9]+$"
+          },
+          "object": {
+            "type": "string",
+            "const": "webhook_delivery"
+          },
+          "endpoint_id": {
+            "type": "string",
+            "pattern": "^whe_[A-Za-z0-9]+$"
+          },
+          "event": {
+            "$ref": "#/components/schemas/WebhookEvent"
+          },
+          "replay_of": {
+            "type": "string",
+            "pattern": "^whd_[A-Za-z0-9]+$"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "retry_scheduled",
+              "delivered",
+              "exhausted"
+            ]
+          },
+          "attempt_count": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 7
+          },
+          "attempts": {
+            "type": "array",
+            "maxItems": 7,
+            "items": {
+              "$ref": "#/components/schemas/WebhookDeliveryAttempt"
+            }
+          },
+          "next_attempt_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "delivered_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "exhausted_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "last_error": {
+            "type": "string",
+            "maxLength": 100
+          },
+          "retention_expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "WebhookDeliveryPage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "maxItems": 200,
+            "items": {
+              "$ref": "#/components/schemas/WebhookDelivery"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "WebhookEvent": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "object",
+          "api_version",
+          "type",
+          "created_at",
+          "resource"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^evt_[A-Za-z0-9]+$"
+          },
+          "object": {
+            "type": "string",
+            "const": "event"
+          },
+          "api_version": {
+            "type": "string",
+            "const": "2026-08-21"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "transcript.completed",
+              "transcript.failed",
+              "transcript.cancelled",
+              "batch.completed",
+              "batch.cancelled"
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "resource": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "object",
+              "status",
+              "version",
+              "url"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "maxLength": 200
+              },
+              "object": {
+                "type": "string",
+                "enum": [
+                  "transcript",
+                  "batch"
+                ]
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "completed",
+                  "failed",
+                  "cancelled"
+                ]
+              },
+              "request_id": {
+                "type": "string",
+                "pattern": "^req_[A-Za-z0-9]+$",
+                "description": "Correlation ID for a transcript admission. Batch events omit this field because their items have separate request IDs."
+              },
+              "version": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "url": {
+                "type": "string",
+                "format": "uri"
+              }
+            }
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "transcript.completed"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "resource": {
+                  "required": [
+                    "request_id"
+                  ],
+                  "properties": {
+                    "id": {
+                      "pattern": "^tr_[A-Za-z0-9]+$"
+                    },
+                    "object": {
+                      "const": "transcript"
+                    },
+                    "status": {
+                      "const": "completed"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "transcript.failed"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "resource": {
+                  "required": [
+                    "request_id"
+                  ],
+                  "properties": {
+                    "id": {
+                      "pattern": "^tr_[A-Za-z0-9]+$"
+                    },
+                    "object": {
+                      "const": "transcript"
+                    },
+                    "status": {
+                      "const": "failed"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "transcript.cancelled"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "resource": {
+                  "required": [
+                    "request_id"
+                  ],
+                  "properties": {
+                    "id": {
+                      "pattern": "^tr_[A-Za-z0-9]+$"
+                    },
+                    "object": {
+                      "const": "transcript"
+                    },
+                    "status": {
+                      "const": "cancelled"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "batch.completed"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "resource": {
+                  "not": {
+                    "required": [
+                      "request_id"
+                    ]
+                  },
+                  "properties": {
+                    "id": {
+                      "pattern": "^bat_[A-Za-z0-9]+$"
+                    },
+                    "object": {
+                      "const": "batch"
+                    },
+                    "status": {
+                      "const": "completed"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "batch.cancelled"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "resource": {
+                  "not": {
+                    "required": [
+                      "request_id"
+                    ]
+                  },
+                  "properties": {
+                    "id": {
+                      "pattern": "^bat_[A-Za-z0-9]+$"
+                    },
+                    "object": {
+                      "const": "batch"
+                    },
+                    "status": {
+                      "const": "cancelled"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ]
+      },
+      "OutcomeError": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "code",
+          "detail",
+          "request_id",
+          "retryable"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "enum": [
+              "source_not_found",
+              "source_removed",
+              "source_private",
+              "source_restricted",
+              "source_live_not_ready",
+              "transcript_unavailable",
+              "track_not_available",
+              "source_too_large",
+              "upstream_enforcement",
+              "proxy_unavailable",
+              "temporarily_unavailable",
+              "internal_error"
+            ]
+          },
+          "detail": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "request_id": {
+            "type": "string"
+          },
+          "retryable": {
+            "type": "boolean"
+          },
+          "retry_after_seconds": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "observed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "cache_status": {
+            "type": "string",
+            "enum": [
+              "hit",
+              "miss",
+              "refresh"
+            ]
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "code": {
+                  "enum": [
+                    "source_not_found",
+                    "source_removed",
+                    "source_private",
+                    "source_restricted",
+                    "source_live_not_ready",
+                    "transcript_unavailable",
+                    "track_not_available",
+                    "source_too_large"
+                  ]
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "observed_at",
+                "cache_status"
+              ]
+            }
+          }
+        ]
+      },
+      "Problem": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": [
+          "type",
+          "title",
+          "status",
+          "code",
+          "detail",
+          "request_id",
+          "retryable"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "format": "uri"
+          },
+          "title": {
+            "type": "string"
+          },
+          "status": {
+            "type": "integer",
+            "minimum": 400,
+            "maximum": 599
+          },
+          "code": {
+            "type": "string",
+            "enum": [
+              "invalid_request",
+              "invalid_api_key",
+              "insufficient_credits",
+              "funding_suspended",
+              "forbidden",
+              "resource_not_found",
+              "resource_not_ready",
+              "caption_access_expired",
+              "idempotency_conflict",
+              "idempotency_resource_deleted",
+              "idempotency_secret_unavailable",
+              "request_not_cancellable",
+              "endpoint_limit_exceeded",
+              "api_key_limit_exceeded",
+              "last_management_key",
+              "webhook_verification_failed",
+              "webhook_delivery_not_replayable",
+              "webhook_secret_rotation_blocked",
+              "payload_too_large",
+              "invalid_source",
+              "temporarily_unavailable",
+              "account_recovery_capacity",
+              "rate_limited",
+              "checkout_rate_limited",
+              "control_plane_rate_limited",
+              "internal_error"
+            ]
+          },
+          "detail": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          },
+          "retryable": {
+            "type": "boolean"
+          },
+          "retry_after_seconds": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "resource_id": {
+            "type": "string",
+            "description": "Exact resource created by an ambiguous idempotent operation. Present only when the caller must identify and revoke a resource whose one-time secret cannot be replayed."
+          },
+          "access_expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "The ended caption-content access window. Present for caption_access_expired."
+          }
+        }
+      }
+    },
+    "examples": {
+      "CreateTranscriptRequest": {
+        "summary": "Request one manual English caption track",
+        "x-schema": "#/components/schemas/CreateTranscriptRequest",
+        "value": {
+          "source": {
+            "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+          },
+          "language_preferences": [
+            "en"
+          ],
+          "caption_kinds": [
+            "manual"
+          ],
+          "include": [
+            "available_tracks"
+          ]
+        }
+      },
+      "ExactTrackRequest": {
+        "summary": "Request one exact published track",
+        "x-schema": "#/components/schemas/CreateTranscriptRequest",
+        "value": {
+          "source": {
+            "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+          },
+          "track_id": "yt.cc.es"
+        }
+      },
+      "CompletedTranscript": {
+        "summary": "Completed transcript with inline segments",
+        "x-schema": "#/components/schemas/Transcript",
+        "value": {
+          "id": "tr_7QxK2mYb",
+          "request_id": "req_5nD8vTca",
+          "object": "transcript",
+          "status": "completed",
+          "source": {
+            "platform": "youtube",
+            "id": "dQw4w9WgXcQ",
+            "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+          },
+          "requested": {
+            "source": {
+              "platform": "youtube",
+              "id": "dQw4w9WgXcQ"
+            },
+            "language_preferences": [
+              "en"
+            ],
+            "caption_kinds": [
+              "manual"
+            ],
+            "language_fallback": "none",
+            "content_format": "segments",
+            "allow_stale_on_error": false,
+            "include": [
+              "available_tracks"
+            ]
+          },
+          "track": {
+            "id": "yt.cc.en",
+            "language": "en",
+            "name": "English",
+            "kind": "manual",
+            "fallback_applied": false
+          },
+          "available_tracks": [
+            {
+              "id": "yt.cc.en",
+              "language": "en",
+              "name": "English",
+              "kind": "manual"
+            },
+            {
+              "id": "yt.asr.en",
+              "language": "en",
+              "name": "English (auto-generated)",
+              "kind": "automatic"
+            }
+          ],
+          "content": {
+            "url": "https://api.transcriptlayer.com/v1/transcripts/tr_7QxK2mYb/content",
+            "available_formats": [
+              "text",
+              "json",
+              "srt",
+              "vtt"
+            ],
+            "included": "segments",
+            "segments": [
+              {
+                "start_ms": 0,
+                "duration_ms": 4300,
+                "text": "A committee had twelve weeks to decide"
+              },
+              {
+                "start_ms": 4300,
+                "duration_ms": 3900,
+                "text": "what a passing civilization should hear."
+              }
+            ]
+          },
+          "retrieval": {
+            "cache_status": "miss",
+            "observed_at": "2026-08-22T09:41:07Z",
+            "access_validated_at": "2026-08-22T09:41:07Z",
+            "access_validation_age_seconds": 0,
+            "cache_age_seconds": 0,
+            "stale": false,
+            "source_market": "US",
+            "content_sha256": "3b1f8c0d94a7e2661bd5a08f7c4e19d2a6f30b5ce8471d92aa0c63e5f7182b4d"
+          },
+          "usage": {
+            "credits_charged": 1
+          },
+          "created_at": "2026-08-22T09:41:05Z",
+          "updated_at": "2026-08-22T09:41:08Z",
+          "completed_at": "2026-08-22T09:41:08Z",
+          "access_expires_at": "2026-08-23T09:41:08Z"
+        }
+      },
+      "PendingTranscript": {
+        "summary": "Durably admitted transcript still processing",
+        "x-schema": "#/components/schemas/Transcript",
+        "value": {
+          "id": "tr_7QxK2mYb",
+          "request_id": "req_5nD8vTca",
+          "object": "transcript",
+          "status": "processing",
+          "source": {
+            "platform": "youtube",
+            "id": "dQw4w9WgXcQ",
+            "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+          },
+          "requested": {
+            "source": {
+              "platform": "youtube",
+              "id": "dQw4w9WgXcQ"
+            },
+            "language_preferences": [
+              "en"
+            ],
+            "caption_kinds": [
+              "manual"
+            ],
+            "language_fallback": "none",
+            "content_format": "segments",
+            "allow_stale_on_error": false,
+            "include": [
+              "available_tracks"
+            ]
+          },
+          "usage": {
+            "credits_charged": 0
+          },
+          "poll_url": "https://api.transcriptlayer.com/v1/transcripts/tr_7QxK2mYb",
+          "created_at": "2026-08-22T09:41:05Z",
+          "updated_at": "2026-08-22T09:41:05Z"
+        }
+      },
+      "FailedTranscript": {
+        "summary": "Admitted request with no matching published track",
+        "x-schema": "#/components/schemas/Transcript",
+        "value": {
+          "id": "tr_9LmP4nZq",
+          "request_id": "req_2hV6bXsw",
+          "object": "transcript",
+          "status": "failed",
+          "source": {
+            "platform": "youtube",
+            "id": "dQw4w9WgXcQ",
+            "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+          },
+          "requested": {
+            "source": {
+              "platform": "youtube",
+              "id": "dQw4w9WgXcQ"
+            },
+            "language_preferences": [
+              "es"
+            ],
+            "caption_kinds": [
+              "manual"
+            ],
+            "language_fallback": "none",
+            "content_format": "segments",
+            "allow_stale_on_error": false,
+            "include": []
+          },
+          "usage": {
+            "credits_charged": 0
+          },
+          "error": {
+            "code": "track_not_available",
+            "detail": "No manual Spanish track is published for this video.",
+            "request_id": "req_2hV6bXsw",
+            "retryable": false,
+            "observed_at": "2026-08-22T09:41:08Z",
+            "cache_status": "miss"
+          },
+          "created_at": "2026-08-22T09:41:05Z",
+          "updated_at": "2026-08-22T09:41:08Z",
+          "completed_at": "2026-08-22T09:41:08Z"
+        }
+      },
+      "CreateBatchRequest": {
+        "summary": "Create a two-item batch",
+        "x-schema": "#/components/schemas/CreateBatchRequest",
+        "value": {
+          "webhook_endpoint_id": "whe_7QxK2mYb",
+          "items": [
+            {
+              "reference": "row-1",
+              "source": {
+                "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+              },
+              "language_preferences": [
+                "en"
+              ]
+            },
+            {
+              "reference": "row-2",
+              "source": {
+                "platform": "youtube",
+                "id": "9bZkp7q19f0"
+              },
+              "language_preferences": [
+                "ko"
+              ],
+              "caption_kinds": [
+                "manual"
+              ]
+            }
+          ]
+        }
+      },
+      "QueuedBatch": {
+        "summary": "Durably admitted batch waiting for processing",
+        "x-schema": "#/components/schemas/Batch",
+        "value": {
+          "id": "bat_7QxK2mYb",
+          "object": "batch",
+          "status": "queued",
+          "counts": {
+            "total": 2,
+            "queued": 2,
+            "processing": 0,
+            "completed": 0,
+            "failed": 0,
+            "cancelled": 0
+          },
+          "created_at": "2026-08-22T09:41:05Z",
+          "updated_at": "2026-08-22T09:41:05Z"
+        }
+      },
+      "CancelledBatch": {
+        "summary": "Batch whose items are all cancelled",
+        "x-schema": "#/components/schemas/Batch",
+        "value": {
+          "id": "bat_7QxK2mYb",
+          "object": "batch",
+          "status": "cancelled",
+          "counts": {
+            "total": 2,
+            "queued": 0,
+            "processing": 0,
+            "completed": 0,
+            "failed": 0,
+            "cancelled": 2
+          },
+          "created_at": "2026-08-22T09:41:05Z",
+          "updated_at": "2026-08-22T09:41:08Z",
+          "completed_at": "2026-08-22T09:41:08Z"
+        }
+      },
+      "RateLimitedProblem": {
+        "summary": "Retryable rate-limit response",
+        "x-schema": "#/components/schemas/Problem",
+        "value": {
+          "type": "https://docs.transcriptlayer.com/errors/rate_limited",
+          "title": "Rate limited",
+          "status": 429,
+          "code": "rate_limited",
+          "detail": "Too many requests.",
+          "request_id": "req_5nD8vTca",
+          "retryable": true,
+          "retry_after_seconds": 10
+        }
+      },
+      "WebhookEvent": {
+        "summary": "Thin terminal transcript event",
+        "x-schema": "#/components/schemas/WebhookEvent",
+        "value": {
+          "id": "evt_7QxK2mYb",
+          "object": "event",
+          "api_version": "2026-08-21",
+          "type": "transcript.completed",
+          "created_at": "2026-08-22T09:41:08Z",
+          "resource": {
+            "id": "tr_7QxK2mYb",
+            "object": "transcript",
+            "status": "completed",
+            "request_id": "req_5nD8vTca",
+            "version": 1,
+            "url": "https://api.transcriptlayer.com/v1/transcripts/tr_7QxK2mYb"
+          }
+        }
+      }
+    }
+  }
+}

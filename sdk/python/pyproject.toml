@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools==83.0.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "transcriptlayer"
+version = "0.1.0b1"
+description = "Official Python client for the TranscriptLayer API"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.11"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["transcriptlayer*"]

@@ -1,0 +1,14 @@
+{
+  "name": "transcriptlayer-clients",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "node --check src/cli.mjs && node --check bin/transcriptlayer.mjs && node --check sdk/typescript/src/index.js && node --test test/cli.test.mjs test/cli-process.test.mjs test/sdk-typescript.test.mjs test/client-contract-routing.test.mjs && PYTHONPATH=sdk/python python3 -m unittest discover -s sdk/python/tests -v",
+    "build:python": "python3 scripts/build-python-wheel.py --source sdk/python --wheel-dir dist"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "packageManager": "npm@11.19.0"
+}

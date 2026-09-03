@@ -1,0 +1,49 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.22.2
+          registry-url: https://registry.npmjs.org
+      - uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548 # v6.1.0
+        with:
+          python-version: "3.14.2"
+      - name: Install the pinned npm release
+        run: |
+          npm install --global --prefix "$RUNNER_TEMP/npm" npm@11.19.0
+          printf '%s\n' "$RUNNER_TEMP/npm/bin" >> "$GITHUB_PATH"
+      - name: Check tag, versions, and publication flags
+        run: |
+          test "${GITHUB_REF_NAME}" = "v0.1.0-beta.1"
+          test "$(node -p "require('./packages/cli/package.json').version")" = "0.1.0-beta.1"
+          test "$(node -p "require('./sdk/typescript/package.json').version")" = "0.1.0-beta.1"
+          test "$(node -p "require('./packages/cli/package.json').private")" = "false"
+          test "$(node -p "require('./sdk/typescript/package.json').private")" = "false"
+          grep -q '^version = "0.1.0b1"$' sdk/python/pyproject.toml
+      - name: Check and build
+        run: |
+          npm run check
+          mkdir dist
+          npm run build:python
+      - name: Publish npm clients with registry provenance
+        run: |
+          npm publish ./packages/cli --access public --provenance
+          npm publish ./sdk/typescript --access public --provenance
+      - name: Publish Python client through trusted publishing
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          packages-dir: dist

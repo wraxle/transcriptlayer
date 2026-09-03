@@ -1,0 +1,186 @@
+{
+  "account": {
+    "operation_id": "getAccount",
+    "status": 200,
+    "value": {
+      "id": "acct_sdk",
+      "object": "account",
+      "status": "active",
+      "credits": {
+        "granted": 10,
+        "remaining": 9,
+        "reserved": 0,
+        "spendable": 9,
+        "used": 1
+      },
+      "funding": {
+        "status": "active",
+        "debt_credits": 0
+      },
+      "created_at": "2026-08-22T09:00:00Z",
+      "updated_at": "2026-08-22T09:41:08Z"
+    }
+  },
+  "api_key_with_secret": {
+    "operation_id": "createApiKey",
+    "status": 201,
+    "value": {
+      "id": "key_sdk",
+      "object": "api_key",
+      "name": "Deploy",
+      "scopes": [
+        "transcripts:read"
+      ],
+      "status": "active",
+      "current": false,
+      "created_at": "2026-08-22T09:41:08Z",
+      "expires_at": null,
+      "last_used_at": null,
+      "revoked_at": null,
+      "secret": "<generated-test-api-key>"
+    }
+  },
+  "transcript_page": {
+    "operation_id": "listTranscripts",
+    "status": 200,
+    "value": {
+      "items": [],
+      "next_cursor": null
+    }
+  },
+  "batch_page": {
+    "operation_id": "listBatches",
+    "status": 200,
+    "value": {
+      "items": [],
+      "next_cursor": null
+    }
+  },
+  "batch_item_page": {
+    "operation_id": "listBatchItems",
+    "status": 200,
+    "value": {
+      "items": [],
+      "next_cursor": null
+    }
+  },
+  "webhook_endpoint_with_secret": {
+    "operation_id": "createWebhookEndpoint",
+    "status": 201,
+    "value": {
+      "id": "whe_sdk",
+      "object": "webhook_endpoint",
+      "name": "Production",
+      "url": "https://hooks.example.com/transcriptlayer",
+      "status": "pending_verification",
+      "signing_key_id": "whk_sdk",
+      "signing_secret": "whsec_sdk_secret",
+      "created_at": "2026-08-22T09:41:08Z",
+      "updated_at": "2026-08-22T09:41:08Z"
+    }
+  },
+  "webhook_endpoint_list": {
+    "operation_id": "listWebhookEndpoints",
+    "status": 200,
+    "value": {
+      "items": []
+    }
+  },
+  "webhook_delivery_page": {
+    "operation_id": "listWebhookDeliveries",
+    "status": 200,
+    "value": {
+      "items": [],
+      "next_cursor": null
+    }
+  },
+  "usage_page": {
+    "operation_id": "listUsage",
+    "status": 200,
+    "value": {
+      "items": [
+        {
+          "id": "use_sdk",
+          "transcript_id": "tr_sdk",
+          "credits": 1,
+          "reason": "selected_track_completed",
+          "created_at": "2026-08-22T09:41:08Z"
+        }
+      ],
+      "next_cursor": null
+    }
+  },
+  "analytics_overview": {
+    "operation_id": "getAccountAnalyticsOverview",
+    "status": 200,
+    "value": {
+      "window_hours": 24,
+      "observed_at": "2026-08-22T10:00:00Z",
+      "totals": {
+        "admitted": 1,
+        "completed": 1,
+        "failed": 0,
+        "cancelled": 0,
+        "credits": 1,
+        "cache_hits": 0,
+        "cache_misses": 1,
+        "cache_refreshes": 0,
+        "stale_deliveries": 0,
+        "latency_samples": 1,
+        "total_latency_ms": 1200,
+        "segments": 2,
+        "content_bytes": 96,
+        "completion_rate": 1,
+        "failure_rate": 0,
+        "cancellation_rate": 0,
+        "average_latency_ms": 1200,
+        "p50_latency_upper_bound_ms": 2000,
+        "p95_latency_upper_bound_ms": 2000,
+        "p99_latency_upper_bound_ms": 2000,
+        "latency_overflow_samples": 0
+      },
+      "execution": {
+        "processing_samples": 1,
+        "source_samples": 1,
+        "diagnostic_samples": 1,
+        "source_attempts": 1,
+        "capacity_waits": 0,
+        "average_queue_latency_ms": 10,
+        "average_processing_latency_ms": 1190,
+        "average_source_wait_ms": 20,
+        "average_source_execution_ms": 1170
+      },
+      "series": [],
+      "outcomes": [],
+      "recent_requests": []
+    }
+  },
+  "account_request_diagnostic": {
+    "operation_id": "getAccountRequestDiagnostic",
+    "status": 200,
+    "value": {
+      "transcript_id": "tr_sdk",
+      "request_id": "req_sdk",
+      "status": "completed",
+      "cache_status": "miss",
+      "stale": false,
+      "error_code": null,
+      "retryable": null,
+      "credits_charged": 1,
+      "track_language": "en",
+      "track_kind": "manual",
+      "segment_count": 2,
+      "content_bytes": 96,
+      "total_latency_ms": 1200,
+      "queue_latency_ms": 10,
+      "processing_latency_ms": 1190,
+      "source_attempts": 1,
+      "capacity_waits": 0,
+      "source_last_attempt_at": "2026-08-22T09:41:07Z",
+      "created_at": "2026-08-22T09:41:05Z",
+      "processing_at": "2026-08-22T09:41:05Z",
+      "completed_at": "2026-08-22T09:41:08Z",
+      "updated_at": "2026-08-22T09:41:08Z"
+    }
+  }
+}

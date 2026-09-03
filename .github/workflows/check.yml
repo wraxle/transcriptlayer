@@ -1,0 +1,35 @@
+name: check
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  clients:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.22.2
+      - uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548 # v6.1.0
+        with:
+          python-version: "3.14.2"
+      - name: Install the pinned npm release
+        run: |
+          npm install --global --prefix "$RUNNER_TEMP/npm" npm@11.19.0
+          printf '%s\n' "$RUNNER_TEMP/npm/bin" >> "$GITHUB_PATH"
+      - name: Check clients
+        run: |
+          test "$(node --version)" = "v22.22.2"
+          test "$(npm --version)" = "11.19.0"
+          test "$(python3 --version)" = "Python 3.14.2"
+          npm run check
+          npm pack ./packages/cli --dry-run --json
+          npm pack ./sdk/typescript --dry-run --json
+          mkdir dist
+          npm run build:python
